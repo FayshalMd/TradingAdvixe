@@ -730,14 +730,32 @@ tr:hover {
     }
 
     th {
-        padding: 10px 4px;
-        font-size: 0.8rem;
+        padding: 8px 2px;
+        font-size: 0.75rem;
+        text-align: center;
+        vertical-align: middle;
+        color: #00d4aa;
+        line-height: 1.2;
     }
-
+    
+    /* Fix for mobile table headers */
+    th .sort-arrow {
+        display: block;
+        text-align: center;
+        margin: 2px auto 0;
+        font-size: 0.7rem;
+    }
+    
+    /* Fix for mobile content alignment */
+    td {
+        text-align: center;
+    }
+    
     /* Make specific columns more mobile-friendly */
     .symbol {
         font-size: 0.8rem;
         min-width: 60px;
+        text-align: left;
     }
 
     .price {
@@ -795,6 +813,45 @@ tr:hover {
 
     .disclaimer p {
         font-size: 0.85rem;
+    }
+
+    /* Additional mobile-specific fixes */
+    .table-container {
+        font-size: 0.8rem;
+    }
+    
+    /* Adjust column widths for better display */
+    th:nth-child(3), /* 24h Change */
+    th:nth-child(4), /* Volume */
+    th:nth-child(5), /* Buy Vol */
+    th:nth-child(6), /* Sell Vol */
+    th:nth-child(7), /* Delta Vol */
+    td:nth-child(3),
+    td:nth-child(4),
+    td:nth-child(5),
+    td:nth-child(6),
+    td:nth-child(7) {
+        max-width: 50px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    
+    /* Make the trade result column stand out */
+    th:nth-child(10),
+    td:nth-child(10) {
+        font-weight: bold;
+    }
+    
+    /* Hide less important columns on very small screens */
+    @media (max-width: 360px) {
+        th:nth-child(5), /* Buy Volume */
+        th:nth-child(6), /* Sell Volume */
+        th:nth-child(11), /* Updated */
+        td:nth-child(5),
+        td:nth-child(6),
+        td:nth-child(11) {
+            display: none;
+        }
     }
 }
 
