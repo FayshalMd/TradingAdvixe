@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crypto Trading Signals Dashboard - All Binance Pairs</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="header">
+    <div class="current-time">
+        <span class="time-label">Current Time:</span>
+        <span class="time-value" id="currentTime">Loading...</span>
+    </div>
+    <h1>🚀 Complete Binance Crypto Signals</h1>
+    <div id="connectionStatus" class="status disconnected">
+        <span class="spinner"></span>Loading Binance data...
+    </div>
+
+    <div class="greed-fear-container">
+        <div class="greed-fear-title">Crypto Market Sentiment</div>
+        <div class="greed-meter">
+            <div class="greed-needle" id="greedNeedle"></div>
+        </div>
+        <div class="greed-value" id="greedValue">50</div>
+        <div class="greed-label" id="greedLabel">Neutral</div>
+        <div class="greed-description" id="greedDescription">Market sentiment is balanced between greed and fear</div>
+
+        <div class="greed-scale">
+            <span>Extreme Fear</span>
+            <span>Extreme Greed</span>
+        </div>
+
+        <div class="greed-levels">
+            <div class="greed-level level-extreme-fear">0-25</div>
+            <div class="greed-level level-fear">26-45</div>
+            <div class="greed-level level-neutral">46-55</div>
+            <div class="greed-level level-greed">56-75</div>
+            <div class="greed-level level-extreme-greed">76-100</div>
+        </div>
+
+        <div class="market-indicators">
+            <div class="indicator-item">
+                <div class="indicator-value" id="volatilityValue">0%</div>
+                <div class="indicator-label">Volatility</div>
+            </div>
+            <div class="indicator-item">
+                <div class="indicator-value" id="volumeValue">0</div>
+                <div class="indicator-label">Volume (24h)</div>
+            </div>
+            <div class="indicator-item">
+                <div class="indicator-value" id="dominanceValue">0%</div>
+                <div class="indicator-label">BTC Dominance</div>
+            </div>
+        </div>
+
+        <div class="last-updated" id="sentimentUpdated">Last updated: Loading...</div>
+    </div>
+
+    <div class="stats-bar">
+        <div class="stat-item">
+            <div class="stat-number" id="totalPairs">0</div>
+            <div class="stat-label">Total Pairs</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-number" id="buySignals">0</div>
+            <div class="stat-label">BUY Signals</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-number" id="sellSignals">0</div>
+            <div class="stat-label">SELL Signals</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-number" id="holdSignals">0</div>
+            <div class="stat-label">HOLD Signals</div>
+        </div>
+    </div>
+</div>
+
+<div class="controls">
+    <div class="search-container">
+        <input type="text" id="searchInput" class="search-input"
+               placeholder="Search cryptocurrencies (e.g., BTC, ETH, DOGE)">
+        <span class="search-icon">🔍</span>
+        <button class="clear-search" id="clearSearch">×</button>
+    </div>
+
+    <select id="symbolFilter" class="filter-select">
+        <option value="all">All Symbols</option>
+        <option value="usdt" selected>USDT Pairs</option>
+        <option value="btc">BTC Pairs</option>
+        <option value="eth">ETH Pairs</option>
+        <option value="bnb">BNB Pairs</option>
+        <option value="busd">BUSD Pairs</option>
+        <option value="spot">Spot Only</option>
+    </select>
+
+    <select id="sortSelect" class="sort-select">
+        <option value="volume">Sort by Volume</option>
+        <option value="signal">Sort by Signal</option>
+        <option value="confidence">Sort by Confidence</option>
+        <option value="change">Sort by 24h Change</option>
+        <option value="deltaVolume">🔥 Delta Volume %</option>
+        <option value="swing-up">🔥 Swing UP (Buyers)</option>
+        <option value="swing-down">🔥 Swing DOWN (Sellers)</option>
+        <option value="price">Sort by Price</option>
+        <option value="symbol">Sort by Symbol</option>
+    </select>
+</div>
+
+<div class="controls">
+    <div class="quick-filters">
+        <button class="quick-filter-btn" data-filter="buy-only">🟢 BUY Only</button>
+        <button class="quick-filter-btn" data-filter="sell-only">🔴 SELL Only</button>
+        <button class="quick-filter-btn" data-filter="swing-up">🚀 Swing UP</button>
+        <button class="quick-filter-btn" data-filter="swing-down">📉 Swing DOWN</button>
+        <button class="quick-filter-btn" data-filter="high-confidence">⭐ High Confidence</button>
+        <button class="quick-filter-btn" data-filter="top-volume">📊 Top Volume</button>
+        <button class="quick-filter-btn active" data-filter="all">🔄 All</button>
+    </div>
+</div>
+
+<div class="table-container">
+    <table id="signalsTable">
+        <thead>
+        <tr>
+            <th data-sort="symbol" title="Trading pair symbol">Symbol <span class="sort-arrow">↕</span></th>
+            <th data-sort="price" title="Current market price">Price <span class="sort-arrow">↕</span></th>
+            <th data-sort="change" title="24h price change percentage">24h Change <span class="sort-arrow">↕</span>
+            </th>
+            <th data-sort="volume" title="24h volume in quote currency">Volume <span class="sort-arrow">↕</span>
+            </th>
+            <th data-sort="buyVolume" title="Recent Buy Volume (approx. last 1 min)">Buy Volume <span
+                    class="sort-arrow">↕</span></th>
+            <th data-sort="sellVolume" title="Recent Sell Volume (approx. last 1 min)">Sell Volume <span
+                    class="sort-arrow">↕</span></th>
+            <th data-sort="deltaVolume" title="Delta Volume Percentage (Buy - Sell)">Delta Vol % <span
+                    class="sort-arrow">↕</span></th>
+            <th data-sort="signal" title="Trading signal based on technical indicators">Signal <span
+                    class="sort-arrow">↕</span></th>
+            <th data-sort="confidence" title="Confidence level of the signal">Confidence <span
+                    class="sort-arrow">↕</span></th>
+            <th data-sort="trade-result" title="Trade recommendation based on current market conditions">Trade
+                Result <span class="sort-arrow">↕</span></th>
+            <th data-sort="updated" title="Last update timestamp">Updated <span class="sort-arrow">↕</span></th>
+        </tr>
+        </thead>
+        <tbody id="signalsTableBody">
+        <tr>
+            <td colspan="11" class="loading">
+                <span class="spinner"></span>Loading all Binance cryptocurrencies...
+            </td>
+        </tr>
+        </tbody>
+    </table>
+</div>
+
+<div class="pagination" id="pagination" style="display: none;">
+    <button id="prevPage">← Previous</button>
+    <span id="pageInfo">Page 1 of 1</span>
+    <button id="nextPage">Next →</button>
+    <select id="pageSize">
+        <option value="50">50 per page</option>
+        <option value="100" selected>100 per page</option>
+        <option value="200">200 per page</option>
+        <option value="500">500 per page</option>
+    </select>
+</div>
+
+<div id="tooltip" class="tooltip"></div>
+
+<div class="disclaimer">
+    <h3>⚠️ Important Disclaimer</h3>
+    <p>
+        <span class="warning">Must Be Researched By Your Own - Don't Be Bullshit!</span>
+    </p>
+    <p>
+        This trading signal dashboard is generated using real present price data and advanced technical indicators
+        including 4EMA (9, 20, 55, 110), AlphaTrend, Enhanced Pivot Points, Bollinger Bands, and Delta Volume Analysis.
+        However, all signals are for <strong>educational and informational purposes only</strong>.
+    </p>
+    <p>
+        <strong>DO YOUR OWN RESEARCH:</strong> Past performance does not guarantee future results. Cryptocurrency
+        trading involves substantial risk of loss. The market is highly volatile and unpredictable. These signals should
+        not be considered as financial advice.
+    </p>
+    <p>
+        <strong>Risk Warning:</strong> Never invest more than you can afford to lose. Always conduct your own analysis
+        and consult with qualified financial advisors before making any trading decisions.
+    </p>
+    <p class="warning">
+        Trade Responsibly - Your Capital Is At Risk!
+    </p>
+</div>
+
+<script src="script1.js"></script>
+<script src="script2.js"></script>
+<script src="script3.js"></script>
+<script src="script4.js"></script>
+<script src="script5.js"></script>
+<script src="script.js"></script>
+</body>
+</html>
