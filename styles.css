@@ -746,6 +746,50 @@ tr:hover {
         font-size: 0.7rem;
     }
     
+    /* Final fix for mobile table headers */
+    @media screen and (max-width: 480px) {
+        table, thead, tbody, th, td, tr { 
+            display: revert; /* Reset any custom display properties */
+        }
+        
+        table {
+            table-layout: fixed;
+            width: 100%;
+        }
+        
+        /* Keep table header cells small and fixed */
+        th {
+            font-size: 0.65rem !important;
+            padding: 5px 2px !important;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            min-width: unset;
+            max-width: unset;
+        }
+        
+        /* Make header text smaller to fit better */
+        th span.sort-arrow {
+            font-size: 0.6rem;
+            opacity: 0.8;
+        }
+    }
+    
+    /* Reset mobile table header display from column to row */
+    table thead tr {
+        display: table-row !important;
+    }
+    
+    table thead th {
+        display: table-cell !important;
+        vertical-align: middle;
+    }
+    
+    th .sort-arrow {
+        display: inline;
+        margin-left: 2px;
+    }
+    
     /* Fix for mobile content alignment */
     td {
         text-align: center;
