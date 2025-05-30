@@ -113,71 +113,184 @@ class CompleteCryptoDashboard {
         
         // Load historical data for more symbols in batches
         const allSymbols = Array.from(this.priceData.keys());
-        const BATCH_SIZE = 10; // Process 10 symbols at a time
-        const MAX_SYMBOLS = 500; // Limit to top 500 by volume for performance
+        const BATCH_SIZE = 50; // Increased batch size for faster processing
+        const MAX_SYMBOLS = 1500; // Increased to 1500 symbols for better market coverage
         
-        // Sort by volume and take top symbols for historical data
-        const topSymbols = allSymbols
-            .map(symbol => ({ symbol, volume: this.priceData.get(symbol)?.quoteVolume || 0 }))
-            .sort((a, b) => b.volume - a.volume)
-            .slice(0, MAX_SYMBOLS)
-            .map(item => item.symbol);
+        // Prioritize USDT pairs first as they're most important
+        const usdtPairs = allSymbols.filter(s => s.endsWith('USDT'));
+        const otherPairs = allSymbols.filter(s => !s.endsWith('USDT'));
+        
+        // Get volume data for sorting
+        const volumeMap = new Map();
+        allSymbols.forEach(symbol => {
+            volumeMap.set(symbol, this.priceData.get(symbol)?.quoteVolume || 0);
+        });
+        
+        // Sort USDT pairs by volume first, then other pairs
+        const sortedUsdtPairs = usdtPairs
+            .sort((a, b) => volumeMap.get(b) - volumeMap.get(a));
+            
+        const sortedOtherPairs = otherPairs
+            .sort((a, b) => volumeMap.get(b) - volumeMap.get(a));
+            
+        // Combine with priority to USDT pairs
+        const topSymbols = [
+            ...sortedUsdtPairs.slice(0, Math.min(sortedUsdtPairs.length, MAX_SYMBOLS * 0.7)),
+            ...sortedOtherPairs.slice(0, Math.min(sortedOtherPairs.length, MAX_SYMBOLS * 0.3))
+        ].slice(0, MAX_SYMBOLS);
 
         console.log(`Loading historical data for ${topSymbols.length} top volume symbols`);
 
-        // Process in batches to avoid overwhelming the API
-        for (let i = 0; i < topSymbols.length; i += BATCH_SIZE) {
-            const batch = topSymbols.slice(i, i + BATCH_SIZE);
+        // Create multiple parallel workers to load data faster
+        const PARALLEL_WORKERS = 10; // Increased from 5 to 10 parallel workers
+        let completedCount = 0;
+        
+        // Start worker processes
+        const startTime = Date.now();
+        console.log(`Starting ${PARALLEL_WORKERS} parallel workers for data loading`);
+        
+        // Create a promise for each worker
+        const workerPromises = [];
+        
+        for (let worker = 0; worker < PARALLEL_WORKERS; worker++) {
+            const promise = this.processHistoricalDataBatch(topSymbols, worker, PARALLEL_WORKERS, BATCH_SIZE)
+                .then(processed => {
+                    completedCount += processed;
+                    const pctComplete = (completedCount / topSymbols.length * 100).toFixed(1);
+                    console.log(`Worker ${worker+1} completed, processed ${processed} symbols (${pctComplete}% done)`);
+                    return processed;
+                })
+                .catch(error => {
+                    console.error(`Worker ${worker+1} failed:`, error);
+                    return 0;
+                });
+                
+            workerPromises.push(promise);
+        }
+        
+        // Fast progress updates for better feedback
+        const progressInterval = setInterval(() => {
+            const progress = Math.min(completedCount, topSymbols.length);
+            const pctComplete = (progress / topSymbols.length * 100).toFixed(1);
+            this.updateConnectionStatus(false, `Loading historical data... (${progress}/${topSymbols.length}, ${pctComplete}%)`);
+        }, 200); // Update more frequently
+        
+        // Wait for all workers to complete
+        Promise.allSettled(workerPromises).then(results => {
+            const totalProcessed = results.reduce((sum, result) => sum + (result.value || 0), 0);
+            const timeElapsed = ((Date.now() - startTime) / 1000).toFixed(1);
             
-            // Process batch concurrently
-            const promises = batch.map(symbol => this.loadSymbolHistoricalData(symbol));
+            clearInterval(progressInterval);
+            console.log(`Completed loading historical data in ${timeElapsed}s: ${this.historicalData.size} symbols`);
+            this.updateConnectionStatus(true, `Data loaded for ${this.historicalData.size} symbols in ${timeElapsed}s`);
+            
+            // Calculate signals once all historical data is loaded
+            this.calculateAllSignals();
+        });
+    }
+    
+    async processHistoricalDataBatch(allSymbols, workerIndex, workerCount, batchSize) {
+        let processedCount = 0;
+        let successCount = 0;
+        let failCount = 0;
+        
+        // Calculate each worker's share of symbols with better distribution
+        const workerSymbols = [];
+        for (let i = workerIndex; i < allSymbols.length; i += workerCount) {
+            workerSymbols.push(allSymbols[i]);
+        }
+        
+        // Process in smaller sub-batches for better progress tracking
+        const SUB_BATCH_SIZE = 20; // Process 20 at a time within each worker
+        
+        for (let i = 0; i < workerSymbols.length; i += SUB_BATCH_SIZE) {
+            const subBatch = workerSymbols.slice(i, i + SUB_BATCH_SIZE);
+            if (subBatch.length === 0) break;
+            
+            // Process sub-batch concurrently
+            const promises = subBatch.map(symbol => this.loadSymbolHistoricalData(symbol));
             
             try {
-                await Promise.allSettled(promises);
+                const results = await Promise.allSettled(promises);
                 
-                // Update progress
-                const progress = Math.min(i + BATCH_SIZE, topSymbols.length);
-                this.updateConnectionStatus(false, `Loading historical data... (${progress}/${topSymbols.length})`);
+                // Track success/failure rates
+                results.forEach(result => {
+                    if (result.status === 'fulfilled' && result.value === true) {
+                        successCount++;
+                    } else {
+                        failCount++;
+                    }
+                });
                 
-                // Small delay to avoid rate limiting
-                await new Promise(resolve => setTimeout(resolve, 100));
+                processedCount += subBatch.length;
+                
+                // Nearly zero delay between sub-batches for maximum speed
+                await new Promise(resolve => setTimeout(resolve, 5));
             } catch (error) {
-                console.error('Batch processing error:', error);
+                console.error(`Sub-batch processing error in worker ${workerIndex}:`, error);
             }
         }
-
-        console.log(`Completed loading historical data for ${this.historicalData.size} symbols`);
+        
+        console.log(`Worker ${workerIndex+1} completed with ${successCount} successes, ${failCount} failures`);
+        return processedCount;
     }
 
     async loadSymbolHistoricalData(symbol) {
         try {
+            // Use AbortController to timeout long-running requests
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+            
             const response = await fetch(
-                `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=1h&limit=200`
+                `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=1h&limit=200`,
+                { signal: controller.signal }
             );
+            
+            clearTimeout(timeoutId);
             
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}`);
             }
             
+            // Use faster response processing
             const klines = await response.json();
             
             if (klines && klines.length > 0) {
-                const prices = klines.map(k => parseFloat(k[4])); // Close prices
-                const highs = klines.map(k => parseFloat(k[2]));
-                const lows = klines.map(k => parseFloat(k[3]));
-                const volumes = klines.map(k => parseFloat(k[5]));
-
+                // Pre-allocate arrays for better performance
+                const len = klines.length;
+                const prices = new Array(len);
+                const highs = new Array(len);
+                const lows = new Array(len);
+                const volumes = new Array(len);
+                
+                // Manual loop is faster than multiple map operations
+                for (let i = 0; i < len; i++) {
+                    const k = klines[i];
+                    prices[i] = +k[4]; // Using unary + is faster than parseFloat
+                    highs[i] = +k[2];
+                    lows[i] = +k[3];
+                    volumes[i] = +k[5];
+                }
+                
                 this.historicalData.set(symbol, {
                     prices,
                     highs,
                     lows,
                     volumes
                 });
+                
+                return true; // Successfully processed
             }
         } catch (error) {
-            console.error(`Error loading historical data for ${symbol}:`, error);
+            if (error.name === 'AbortError') {
+                console.warn(`Fetch timeout for ${symbol}`);
+            } else {
+                console.error(`Error loading historical data for ${symbol}:`, error);
+            }
             // Don't throw, just continue with other symbols
         }
+        
+        return false; // Failed to process
     }
 
     calculateAllSignals() {
