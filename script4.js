@@ -42,6 +42,9 @@ CompleteCryptoDashboard.prototype.getFilteredAndSortedData = function() {
         case 'sell-only':
             filtered = filtered.filter(d => d.signal === 'SELL');
             break;
+        case 'hold-only':
+            filtered = filtered.filter(d => d.signal === 'HOLD');
+            break;
         case 'swing-up':
             filtered = filtered.filter(d => {
                 const swingScore = this.calculateSwingPotential(d.signal, d.confidence, d.change);
@@ -74,6 +77,20 @@ CompleteCryptoDashboard.prototype.getFilteredAndSortedData = function() {
             case 'swing-down':
                 aVal = this.getSwingScore(a, 'down');
                 bVal = this.getSwingScore(b, 'down');
+                break;
+            case 'hold':
+                // Sort by HOLD position with swing tendencies
+                if (a.signal === 'HOLD' && b.signal !== 'HOLD') {
+                    return this.sortDirection === 'asc' ? 1 : -1;
+                }
+                if (a.signal !== 'HOLD' && b.signal === 'HOLD') {
+                    return this.sortDirection === 'asc' ? -1 : 1;
+                }
+                if (a.signal === 'HOLD' && b.signal === 'HOLD') {
+                    // Compare deltaVolume to determine buy/sell tendency within HOLD
+                    return this.sortDirection === 'asc' ? a.deltaVolume - b.deltaVolume : b.deltaVolume - a.deltaVolume;
+                }
+                return 0;
                 break;
             case 'symbol':
                 aVal = a.symbol;
@@ -137,6 +154,9 @@ CompleteCryptoDashboard.prototype.getFilteredAndSortedData = function() {
 };
 
 CompleteCryptoDashboard.prototype.renderTable = function() {
+    // Store current time to ensure fresh timestamps
+    const renderTime = Date.now();
+    
     const tbody = document.getElementById('signalsTableBody');
     const filteredData = this.getFilteredAndSortedData();
     
@@ -151,13 +171,19 @@ CompleteCryptoDashboard.prototype.renderTable = function() {
         return;
     }
 
+    // Track when table was last fully refreshed
+    this.lastTableRefresh = renderTime;
+
     pageData.forEach(data => {
-        const signalText = this.getSignalText(data.signal, data.confidence);
+        const signalText = this.getSignalText(data.signal, data.confidence, data.symbol);
         const confidenceLabel = this.getConfidenceLabel(data.confidence);
         const tradeResult = data.tradeResult || { status: 'dont-trade', text: "Don't Trade" };
 
         const row = document.createElement('tr');
         row.id = `row-${data.symbol}`;
+        
+        // Calculate timestamp based on render time for consistent display
+        const timestamp = this.formatTimestamp(data.lastUpdated);
         
         row.innerHTML = `
             <td class="symbol">${data.symbol}</td>
@@ -167,10 +193,10 @@ CompleteCryptoDashboard.prototype.renderTable = function() {
             <td>${this.formatVolume(data.buyVolume || 0)}</td>
             <td>${this.formatVolume(data.sellVolume || 0)}</td>
             <td style="color: ${data.deltaVolume >= 0 ? '#00d4aa' : '#ff6b6b'}">${data.deltaVolume ? data.deltaVolume.toFixed(2)+'%' : 'N/A'}</td>
-            <td><span class="signal ${data.signal.toLowerCase()}">${signalText}</span></td>
+            <td><span class="signal ${this.getSignalClass(data.symbol)}">${signalText}</span></td>
             <td class="confidence ${confidenceLabel.toLowerCase().replace(' ', '-')}">${data.confidence}%</td>
             <td><span class="trade-result ${tradeResult.status}">${tradeResult.text}</span></td>
-            <td class="timestamp">${this.formatTimestamp(data.lastUpdated)}</td>
+            <td class="timestamp" data-timestamp="${data.lastUpdated}">${timestamp}</td>
         `;
 
         tbody.appendChild(row);
@@ -186,26 +212,38 @@ CompleteCryptoDashboard.prototype.updateTableRowImmediate = function(symbol) {
     const data = this.priceData.get(symbol);
     if (!data) return;
 
-    // Update price and change cells immediately
+    // Direct DOM updates for maximum speed - avoid requestAnimationFrame overhead
+    // Update price cell with highest priority for real-time display
     row.children[1].textContent = `${this.formatPrice(data.price)} ${data.quoteAsset}`;
-    row.children[2].textContent = `${data.change.toFixed(2)}%`;
-    row.children[2].style.color = data.change >= 0 ? '#00d4aa' : '#ff6b6b';
-    row.children[3].textContent = this.formatVolume(data.quoteVolume);
-    row.children[4].textContent = this.formatVolume(data.buyVolume || 0);
-    row.children[5].textContent = this.formatVolume(data.sellVolume || 0);
     
-    // Update delta volume with color coding
-    const deltaCell = row.children[6];
+    // Update change with color
+    const changeCell = row.children[2];
+    changeCell.textContent = `${data.change.toFixed(2)}%`;
+    changeCell.style.color = data.change >= 0 ? '#00d4aa' : '#ff6b6b';
+    
+    // Fast update of critical cells only - less important cells updated less frequently
+    row.children[3].textContent = this.formatVolume(data.quoteVolume);
+    
+    // Update delta volume (buyers vs sellers indicator)
+    const deltaCell = row.children[6]; 
     deltaCell.textContent = data.deltaVolume ? data.deltaVolume.toFixed(2)+'%' : 'N/A';
     deltaCell.style.color = data.deltaVolume >= 0 ? '#00d4aa' : '#ff6b6b';
     
+    // Fast timestamp update
     row.children[10].textContent = this.formatTimestamp(data.lastUpdated);
 
-    // Flash effect on price change
+    // Apply optimized flash effect for price changes - shorter duration
     if (data.priceChange) {
         const flashClass = data.priceChange > 0 ? 'flash-green' : 'flash-red';
+        
+        // Clean up existing flash classes first
+        row.classList.remove('flash-green', 'flash-red');
+        
+        // Add flash class immediately
         row.classList.add(flashClass);
-        setTimeout(() => row.classList.remove(flashClass), 500);
+        
+        // Remove flash class after shorter duration (300ms instead of 500ms)
+        setTimeout(() => row.classList.remove(flashClass), 300);
     }
 };
 
@@ -216,7 +254,7 @@ CompleteCryptoDashboard.prototype.updateTableRow = function(symbol, signalChange
     const data = this.priceData.get(symbol);
     if (!data) return;
 
-    const signalText = this.getSignalText(data.signal, data.confidence);
+    const signalText = this.getSignalText(data.signal, data.confidence, data.symbol);
     const confidenceLabel = this.getConfidenceLabel(data.confidence);
     const tradeResult = data.tradeResult || { status: 'dont-trade', text: "Don't Trade" };
 
@@ -243,7 +281,7 @@ CompleteCryptoDashboard.prototype.updateTableRow = function(symbol, signalChange
     deltaCell.textContent = data.deltaVolume ? data.deltaVolume.toFixed(2)+'%' : 'N/A';
     deltaCell.style.color = data.deltaVolume >= 0 ? '#00d4aa' : '#ff6b6b';
     
-    row.children[7].innerHTML = `<span class="signal ${data.signal.toLowerCase()}">${signalText}</span>`;
+    row.children[7].innerHTML = `<span class="signal ${this.getSignalClass(data.symbol)}">${signalText}</span>`;
     row.children[8].textContent = `${data.confidence}%`;
     row.children[8].className = `confidence ${confidenceLabel.toLowerCase().replace(' ', '-')}`;
     row.children[9].innerHTML = `<span class="trade-result ${tradeResult.status}">${tradeResult.text}</span>`;
@@ -277,12 +315,43 @@ CompleteCryptoDashboard.prototype.updatePagination = function(totalItems) {
     document.getElementById('nextPage').disabled = this.currentPage === totalPages;
 };
 
-CompleteCryptoDashboard.prototype.getSignalText = function(signal, confidence) {
+CompleteCryptoDashboard.prototype.getSignalText = function(signal, confidence, symbol) {
     if (signal === 'BUY' && confidence >= 75) return 'BUY/LONG';
     if (signal === 'SELL' && confidence >= 75) return 'SELL/SHORT';
-    if (signal === 'HOLD') return 'HOLD';
+    if (signal === 'HOLD') {
+        const symbolData = this.priceData.get(symbol); // Get the symbol data passed as third argument
+        if (symbolData) {
+            // Show buy/sell tendency for HOLD positions
+            if (symbolData.deltaVolume >= 3) {
+                return 'HOLD → BUY';
+            } else if (symbolData.deltaVolume <= -3) {
+                return 'HOLD → SELL';
+            }
+        }
+        return 'HOLD';
+    }
     if (confidence <= 25) return 'No Signal';
     return signal;
+};
+
+CompleteCryptoDashboard.prototype.getSignalClass = function(symbol) {
+    const data = this.priceData.get(symbol);
+    if (!data) return 'hold';
+
+    const signal = data.signal;
+    
+    // Process HOLD signals with buy/sell tendency
+    if (signal === 'HOLD') {
+        // Check deltaVolume to determine buy/sell tendency
+        if (data.deltaVolume >= 3) {
+            return 'hold-buy';  // HOLD with buying tendency
+        } else if (data.deltaVolume <= -3) {
+            return 'hold-sell'; // HOLD with selling tendency
+        }
+        return 'hold';
+    }
+    
+    return signal.toLowerCase();
 };
 
 CompleteCryptoDashboard.prototype.getSwingScore = function(data, direction) {
@@ -434,6 +503,7 @@ CompleteCryptoDashboard.prototype.formatVolume = function(volume) {
 
 CompleteCryptoDashboard.prototype.formatTimestamp = function(timestamp) {
     const seconds = Math.floor((Date.now() - timestamp) / 1000);
+    if (seconds < 5) return `LIVE 🔴`;
     if (seconds < 60) return `${seconds}s ago`;
     const minutes = Math.floor(seconds / 60);
     if (minutes < 60) return `${minutes}m ago`;
