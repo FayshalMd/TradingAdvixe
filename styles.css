@@ -447,6 +447,18 @@ tr:hover {
     box-shadow: 0 4px 15px rgba(255, 217, 61, 0.4);
 }
 
+.signal.hold-buy {
+    background: linear-gradient(135deg, #ffd93d 0%, #6ad38c 100%);
+    color: #2c2c2c;
+    box-shadow: 0 4px 15px rgba(106, 211, 140, 0.4);
+}
+
+.signal.hold-sell {
+    background: linear-gradient(135deg, #ffd93d 0%, #ff9d9d 100%);
+    color: #2c2c2c;
+    box-shadow: 0 4px 15px rgba(255, 157, 157, 0.4);
+}
+
 .signal.no-movement {
     background: linear-gradient(135deg, #6c757d 0%, #5a6268 100%);
     color: #ffffff;
@@ -522,6 +534,25 @@ tr:hover {
 .timestamp {
     font-size: 0.8rem;
     color: #888;
+}
+
+/* Style for live timestamps */
+.timestamp.live-update {
+    color: #00d4aa;
+    font-weight: bold;
+    animation: pulseLive 1s infinite;
+}
+
+/* Style for highlighting recent updates */
+.recent-update {
+    color: #00d4aa !important;
+    animation: pulseLive 1s infinite;
+    font-weight: bold;
+}
+
+@keyframes pulseLive {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
 }
 
 .flash-green {
