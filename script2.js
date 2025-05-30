@@ -16,25 +16,57 @@ CompleteCryptoDashboard.prototype.setupWebSocket = function() {
 
 CompleteCryptoDashboard.prototype.setupMultipleWebSocketConnections = function(symbols) {
     this.webSockets = [];
-    const STREAMS_PER_CONNECTION = 150; // Reduced from 200 to handle high frequency better
+    const STREAMS_PER_CONNECTION = 100; // Reduced from 150 to 100 for better reliability
+    
+    // Prioritize USDT pairs as they're most frequently used
+    const usdtPairs = symbols.filter(s => s.endsWith('USDT'));
+    const otherPairs = symbols.filter(s => !s.endsWith('USDT'));
+    
+    // Put USDT pairs in the first connections for faster updates
+    const sortedSymbols = [...usdtPairs, ...otherPairs];
     
     // Split symbols into chunks
     const chunks = [];
-    for (let i = 0; i < symbols.length; i += STREAMS_PER_CONNECTION) {
-        chunks.push(symbols.slice(i, i + STREAMS_PER_CONNECTION));
+    for (let i = 0; i < sortedSymbols.length; i += STREAMS_PER_CONNECTION) {
+        chunks.push(sortedSymbols.slice(i, i + STREAMS_PER_CONNECTION));
     }
 
     console.log(`Creating ${chunks.length} WebSocket connections for complete coverage`);
 
-    // Increased delay between connections to prevent overwhelming
-    chunks.forEach((chunk, index) => {
+    // Check if this is a fresh page load
+    const isPageReload = document.readyState === "complete" && 
+                        (!this.lastReconnectTime || (Date.now() - this.lastReconnectTime > 10000));
+    
+    if (isPageReload) {
+        console.log('Page reload detected - fast connection setup');
+        this.lastReconnectTime = Date.now();
+    }
+
+    // Create first few connections immediately for instant updates on page load
+    const fastConnectCount = Math.min(3, chunks.length); // First 3 connections without delay
+    
+    // Connect first chunks immediately (these contain the USDT pairs)
+    for (let i = 0; i < fastConnectCount; i++) {
+        if (chunks[i]) {
+            // No delay for first connections - immediate updates after reload
+            this.createWebSocketConnection(chunks[i], i, true); 
+        }
+    }
+    
+    // Connect remaining chunks with staggered timing
+    for (let i = fastConnectCount; i < chunks.length; i++) {
+        // Reduced delays for faster overall connection
+        const delay = isPageReload ? 
+            Math.min(100 * i, 1000) : // Faster connection on page reload
+            Math.min(300 * Math.pow(1.2, i), 2000); // Normal staggered timing
+            
         setTimeout(() => {
-            this.createWebSocketConnection(chunk, index);
-        }, index * 500); // Increased from 200ms to 500ms
-    });
+            this.createWebSocketConnection(chunks[i], i, false);
+        }, delay);
+    }
 };
 
-CompleteCryptoDashboard.prototype.createWebSocketConnection = function(symbols, connectionIndex) {
+CompleteCryptoDashboard.prototype.createWebSocketConnection = function(symbols, connectionIndex, isPriorityConnection = false) {
     // Close any existing connection for this index
     if (this.webSockets[connectionIndex]) {
         this.webSockets[connectionIndex].close();
@@ -47,17 +79,17 @@ CompleteCryptoDashboard.prototype.createWebSocketConnection = function(symbols, 
     const wsUrl = `wss://stream.binance.com:9443/stream?streams=${streams}`;
     const ws = new WebSocket(wsUrl);
 
-    // Set connection timeout
+    // Set connection timeout (shorter for priority connections)
     const connectionTimeout = setTimeout(() => {
         if (ws.readyState === WebSocket.CONNECTING) {
             console.log(`WebSocket ${connectionIndex + 1} connection timeout`);
             ws.close();
         }
-    }, 10000);
+    }, isPriorityConnection ? 5000 : 10000);
 
     ws.onopen = () => {
         clearTimeout(connectionTimeout);
-        console.log(`WebSocket ${connectionIndex + 1} connected with ${symbols.length} streams`);
+        console.log(`WebSocket ${connectionIndex + 1} connected with ${symbols.length} streams${isPriorityConnection ? ' (priority)' : ''}`);
         this.reconnectAttempts = 0; // Reset on successful connection
         this.updateConnectionStatus(true, `Real-time updates active (${this.getActiveConnections()}/${Math.ceil(Array.from(this.priceData.keys()).length / 150)} connections)`);
     };
@@ -126,93 +158,117 @@ CompleteCryptoDashboard.prototype.getActiveConnections = function() {
 CompleteCryptoDashboard.prototype.handlePriceUpdate = function(data) {
     const symbol = data.s;
     const price = parseFloat(data.c);
-    const change = parseFloat(data.P);
-    const volume = parseFloat(data.v);
-    const quoteVolume = parseFloat(data.q);
-    const count = parseInt(data.n); // Number of trades
-
+    
     const existing = this.priceData.get(symbol);
     if (!existing) return;
-
+    
     const oldPrice = existing.price;
-    const oldSignal = existing.signal;
-
-    // Calculate buy/sell volume approximation
-    const priceChange = price - oldPrice;
-    const volumeChange = quoteVolume - (existing.quoteVolume || 0);
     
-    // Enhanced volume analysis based on price movement
-    if (priceChange > 0 && volumeChange > 0) {
-        // Price up = more buying pressure
-        existing.buyVolume = (existing.buyVolume || 0) + volumeChange * 0.7;
-        existing.sellVolume = (existing.sellVolume || 0) + volumeChange * 0.3;
-    } else if (priceChange < 0 && volumeChange > 0) {
-        // Price down = more selling pressure
-        existing.buyVolume = (existing.buyVolume || 0) + volumeChange * 0.3;
-        existing.sellVolume = (existing.sellVolume || 0) + volumeChange * 0.7;
-    } else if (volumeChange > 0) {
-        // Price flat = split volume evenly
-        existing.buyVolume = (existing.buyVolume || 0) + volumeChange * 0.5;
-        existing.sellVolume = (existing.sellVolume || 0) + volumeChange * 0.5;
-    }
-
-    // Calculate delta volume percentage
-    const totalVol = (existing.buyVolume || 0) + (existing.sellVolume || 0);
-    existing.deltaVolume = totalVol > 0 ? 
-        ((existing.buyVolume || 0) - (existing.sellVolume || 0)) / totalVol * 100 : 0;
-
+    // Only register a real update if price actually changed
+    const priceChanged = price !== oldPrice;
+    
+    // Always update price immediately to ensure real-time price display
     existing.price = price;
-    existing.change = change;
-    existing.volume = volume;
-    existing.quoteVolume = quoteVolume;
-    existing.lastUpdated = Date.now();
-    existing.priceChange = priceChange;
-    existing.tradeCount = count;
-
-    // Throttle UI updates - only update visible rows and not too frequently
-    this.throttleUIUpdate(symbol);
-
-    // Batch signal recalculation for performance
-    if (!this.pendingSignalUpdates) {
-        this.pendingSignalUpdates = new Set();
-    }
-    this.pendingSignalUpdates.add(symbol);
-
-    // Increased debounce time to handle high frequency updates
-    if (!this.signalUpdateTimer) {
-        this.signalUpdateTimer = setTimeout(() => {
-            this.processPendingSignalUpdates();
-        }, 200); // Increased from 50ms to 200ms
+    existing.priceChange = priceChanged ? price - oldPrice : 0;
+    
+    // Always refresh the timestamp on actual price changes
+    if (priceChanged) {
+        existing.lastUpdated = Date.now();
     }
     
-    // Update stats less frequently
-    if (!this.statsUpdateTimer) {
-        this.statsUpdateTimer = setTimeout(() => {
-            this.updateStats();
-            this.statsUpdateTimer = null;
-        }, 2000); // Increased from 500ms to 2000ms
+    // Immediate update of price in UI
+    this.updatePriceUI(symbol, priceChanged);
+    
+    // Process other data updates with optimized throttling
+    if (!this.fullUpdateThrottle) {
+        this.fullUpdateThrottle = new Map();
+    }
+    
+    const now = Date.now();
+    const lastFullUpdate = this.fullUpdateThrottle.get(symbol) || 0;
+    
+    // Process full data updates every 200ms for each symbol (faster than before)
+    if (now - lastFullUpdate > 200) {
+        this.fullUpdateThrottle.set(symbol, now);
+        
+        const change = parseFloat(data.P);
+        const volume = parseFloat(data.v);
+        const quoteVolume = parseFloat(data.q);
+        const count = parseInt(data.n);
+        
+        // Optimized volume analysis
+        const volumeChange = quoteVolume - (existing.quoteVolume || 0);
+        if (volumeChange > 0) {
+            const buyFactor = existing.priceChange > 0 ? 0.7 : (existing.priceChange < 0 ? 0.3 : 0.5);
+            existing.buyVolume = (existing.buyVolume || 0) + volumeChange * buyFactor;
+            existing.sellVolume = (existing.sellVolume || 0) + volumeChange * (1 - buyFactor);
+        }
+
+        existing.deltaVolume = ((existing.buyVolume || 0) - (existing.sellVolume || 0)) / 
+                              ((existing.buyVolume || 0) + (existing.sellVolume || 0) || 1) * 100;
+        existing.change = change;
+        existing.volume = volume;
+        existing.quoteVolume = quoteVolume;
+        existing.tradeCount = count;
+
+        // Batch signal updates more efficiently
+        this.queueSignalUpdate(symbol);
+        
+        // Schedule stats update if not already pending
+        if (!this.statsUpdateTimer) {
+            this.statsUpdateTimer = setTimeout(() => {
+                this.updateStats();
+                this.statsUpdateTimer = null;
+            }, 1000); // More frequent stats updates
+        }
     }
 };
 
-CompleteCryptoDashboard.prototype.throttleUIUpdate = function(symbol) {
-    // Initialize throttle tracking
-    if (!this.uiUpdateThrottle) {
-        this.uiUpdateThrottle = new Map();
-    }
-
-    const now = Date.now();
-    const lastUpdate = this.uiUpdateThrottle.get(symbol) || 0;
+CompleteCryptoDashboard.prototype.updatePriceUI = function(symbol, priceChanged) {
+    const row = document.getElementById(`row-${symbol}`);
+    if (!row) return;
     
-    // Only update UI every 500ms per symbol to prevent overwhelming
-    if (now - lastUpdate > 500) {
-        this.uiUpdateThrottle.set(symbol, now);
+    const data = this.priceData.get(symbol);
+    if (!data) return;
+    
+    // Update price cell immediately
+    row.children[1].textContent = `${this.formatPrice(data.price)} ${data.quoteAsset}`;
+    
+    // Flash effect on price change
+    if (priceChanged) {
+        const flashClass = data.priceChange > 0 ? 'flash-green' : 'flash-red';
+        row.classList.add(flashClass);
+        setTimeout(() => row.classList.remove(flashClass), 300); // Shorter flash duration
         
-        // Only update if row is visible in current page
-        const row = document.getElementById(`row-${symbol}`);
-        if (row) {
-            this.updateTableRowImmediate(symbol);
+        // Update timestamp immediately on price change for instant feedback
+        const timestampCell = row.children[10];
+        timestampCell.textContent = this.formatTimestamp(data.lastUpdated);
+        
+        // Add live indicator class
+        if (Date.now() - data.lastUpdated < 5000) {
+            timestampCell.classList.add('live-update');
+            timestampCell.classList.add('recent-update');
         }
     }
+    
+    // Update full row if visible and not recently updated
+    if (!this.uiUpdateThrottle) this.uiUpdateThrottle = new Map();
+    const now = Date.now();
+    if (now - (this.uiUpdateThrottle.get(symbol) || 0) > 100) { // Faster 100ms throttle
+        this.uiUpdateThrottle.set(symbol, now);
+        this.updateTableRowImmediate(symbol);
+    }
+};
+
+CompleteCryptoDashboard.prototype.queueSignalUpdate = function(symbol) {
+    if (!this.pendingSignalUpdates) {
+        this.pendingSignalUpdates = new Set();
+        this.signalUpdateTimer = setTimeout(() => {
+            this.processPendingSignalUpdates();
+            this.signalUpdateTimer = null;
+        }, 100); // Faster debounce (100ms)
+    }
+    this.pendingSignalUpdates.add(symbol);
 };
 
 CompleteCryptoDashboard.prototype.processPendingSignalUpdates = function() {
@@ -291,30 +347,42 @@ CompleteCryptoDashboard.prototype.saveData = function() {
 
 CompleteCryptoDashboard.prototype.loadSavedData = async function() {
     try {
+        // Show loading indicator for better UX
+        this.updateConnectionStatus(false, 'Initializing real-time data...');
+        
         const savedData = localStorage.getItem('cryptoDashboard');
         if (savedData) {
             const data = JSON.parse(savedData);
             const timeSinceLastUpdate = Date.now() - data.lastUpdate;
             
-            // Only restore if data is less than 1 hour old
-            if (timeSinceLastUpdate < 3600000) {
-                this.priceData = new Map(data.priceData);
-                this.historicalData = new Map(data.historicalData);
-                this.currentFilter = data.currentFilter || 'usdt';
-                this.currentSort = data.currentSort || 'volume';
-                this.currentPage = data.currentPage || 1;
-                this.searchTerm = data.searchTerm || '';
-                this.quickFilter = data.quickFilter || 'all';
+            // Accept data up to 2 hours old (increased from 1 hour) for faster startup
+            if (timeSinceLastUpdate < 7200000) {
+                console.log('Loading saved data from local storage');
                 
-                console.log(`Restored ${this.priceData.size} symbols from saved data`);
-                this.updateConnectionStatus(false, 'Restored from saved data - Reconnecting...');
+                // Load saved data in a non-blocking way for better performance
+                setTimeout(() => {
+                    this.priceData = new Map(data.priceData);
+                    this.historicalData = new Map(data.historicalData);
+                    this.currentFilter = data.currentFilter || 'usdt';
+                    this.currentSort = data.currentSort || 'volume';
+                    this.currentPage = data.currentPage || 1;
+                    this.searchTerm = data.searchTerm || '';
+                    this.quickFilter = data.quickFilter || 'all';
+                    
+                    console.log(`Restored ${this.priceData.size} symbols from saved data`);
+                    this.updateConnectionStatus(false, 'Reloading real-time connections...');
+                    
+                    // Render table immediately to show content as fast as possible
+                    this.renderTable();
+                    
+                    // Begin reconnection process - this will update the stale data
+                    this.isPageReload = true;
+                    // Flag for faster WebSocket setup
+                }, 0); // Using setTimeout with 0 to prevent UI blocking
                 
-                // Render table with saved data immediately
-                if (this.priceData.size > 0) {
-                    setTimeout(() => this.renderTable(), 100);
-                }
+                return true; // Successfully loaded data
             } else {
-                console.log('Saved data too old, starting fresh');
+                console.log('Saved data too old (over 2 hours), starting fresh');
                 localStorage.removeItem('cryptoDashboard');
             }
         }
@@ -322,4 +390,6 @@ CompleteCryptoDashboard.prototype.loadSavedData = async function() {
         console.warn('Failed to load saved data:', error);
         localStorage.removeItem('cryptoDashboard');
     }
+    
+    return false; // No saved data loaded
 };
