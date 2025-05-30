@@ -1,16 +1,32 @@
 // Event Handling, Updates and Initialization
 CompleteCryptoDashboard.prototype.startUpdateLoop = function() {
-    // Update timestamps every 10 seconds (increased from 5)
+    // Update timestamps every 1 second (dractically reduced from 10 seconds)
     this.timestampInterval = setInterval(() => {
+        // More efficient timestamp updates using data attributes
         document.querySelectorAll('.timestamp').forEach(cell => {
-            const row = cell.parentElement;
-            const symbol = row.children[0].textContent;
-            const data = this.priceData.get(symbol);
-            if (data) {
-                cell.textContent = this.formatTimestamp(data.lastUpdated);
+            // Get stored timestamp from data attribute if available
+            const storedTimestamp = cell.getAttribute('data-timestamp');
+            if (storedTimestamp) {
+                const timestamp = parseInt(storedTimestamp);
+                // Only update if value exists and is valid
+                if (!isNaN(timestamp)) {
+                    cell.textContent = this.formatTimestamp(timestamp);
+                    
+                    // Apply highlight for recently updated items (within last 5 seconds)
+                    const seconds = Math.floor((Date.now() - timestamp) / 1000);
+                    if (seconds < 5) {
+                        cell.classList.add('recent-update');
+                        cell.classList.add('live-update');
+                        // Force update text content to ensure "LIVE" indicator is shown
+                        cell.textContent = this.formatTimestamp(timestamp);
+                    } else {
+                        cell.classList.remove('recent-update');
+                        cell.classList.remove('live-update');
+                    }
+                }
             }
         });
-    }, 10000);
+    }, 1000);
 
     // Periodic signal recalculation for symbols without real-time updates
     this.signalRecalculationInterval = setInterval(() => {
@@ -548,19 +564,41 @@ CompleteCryptoDashboard.prototype.handleReconnection = function() {
         return;
     }
 
-    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-        console.log('Max reconnection attempts reached');
-        this.updateConnectionStatus(false, 'Max reconnection attempts reached. Please refresh the page.');
-        return;
-    }
-
-    this.reconnectAttempts++;
-    const delay = Math.min(5000 * this.reconnectAttempts, 30000); // Max 30 seconds
+    // For page reloads or initial connections, attempt immediate connection
+    const isInitialConnection = this.reconnectAttempts === 0;
     
-    console.log(`Reconnection attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${delay/1000}s`);
-    this.updateConnectionStatus(false, `Reconnecting... (Attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
+    // Reset reconnect attempts if too many to allow retry
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+        console.log('Max reconnection attempts reached, resetting to try again');
+        this.reconnectAttempts = Math.max(1, Math.floor(this.maxReconnectAttempts / 2));
+    } else {
+        this.reconnectAttempts++;
+    }
+    
+    // Fast reconnection for initial/page reload, progressive backoff for subsequent attempts
+    const delay = isInitialConnection ? 0 : Math.min(2000 * this.reconnectAttempts, 10000); // Shorter max delay (10s)
+    
+    console.log(`${isInitialConnection ? 'Initial connection' : 'Reconnection attempt'} ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${delay/1000}s`);
+    this.updateConnectionStatus(false, isInitialConnection ? 
+        'Establishing real-time connections...' : 
+        `Reconnecting... (Attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
     
     setTimeout(() => {
+        // For page reloads, force a complete reset of connections
+        if (isInitialConnection) {
+            // Close any existing connections first
+            if (this.webSockets) {
+                this.webSockets.forEach(ws => {
+                    if (ws && ws.readyState !== WebSocket.CLOSED) {
+                        ws.close();
+                    }
+                });
+            }
+            
+            console.log('Setting up fresh WebSocket connections');
+            this.webSockets = [];
+        }
+        
         this.setupWebSocket();
     }, delay);
 };
@@ -591,4 +629,14 @@ CompleteCryptoDashboard.prototype.cleanup = function() {
     if (this.webSocket && this.webSocket.readyState === WebSocket.OPEN) {
         this.webSocket.close();
     }
+};
+
+CompleteCryptoDashboard.prototype.formatTimestamp = function(timestamp) {
+    const seconds = Math.floor((Date.now() - timestamp) / 1000);
+    if (seconds < 5) return `LIVE 🔴`;
+    if (seconds < 60) return `${seconds}s ago`;
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    return `${hours}h ago`;
 };
