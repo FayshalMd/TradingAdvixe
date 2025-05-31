@@ -765,23 +765,6 @@ tr:hover {
         font-size: 0.8rem;
     }
 
-    /* Fix table headers on mobile - ensure they display as a row, not stacked */
-    table thead {
-        display: table-header-group;
-    }
-
-    table tbody {
-        display: table-row-group;
-    }
-
-    table tr {
-        display: table-row;
-    }
-
-    table th, table td {
-        display: table-cell;
-    }
-
     /* Make specific columns more mobile-friendly */
     .symbol {
         font-size: 0.8rem;
@@ -954,28 +937,6 @@ tr:hover {
 
     .table-container {
         position: relative;
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch; /* Smooth scrolling on iOS */
-    }
-
-    /* Ensure table retains structure on small screens */
-    table {
-        table-layout: auto;
-        width: 100%;
-        min-width: 650px; /* Prevent columns from becoming too narrow */
-    }
-    
-    /* Explicitly define table structure */
-    table, thead, tbody, tr {
-        display: table;
-        width: 100%;
-        table-layout: fixed;
-    }
-    
-    thead {
-        position: sticky;
-        top: 0;
-        z-index: 10;
     }
 
     /* Add shadow to indicate scrollable content */
