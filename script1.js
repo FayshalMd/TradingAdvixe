@@ -46,8 +46,18 @@ class CompleteCryptoDashboard {
         try {
             this.updateConnectionStatus(false, 'Loading all Binance symbols...');
             
-            const response = await fetch('https://api.binance.com/api/v3/exchangeInfo');
+            // Use a CORS proxy to avoid CORS issues when running locally
+            const proxyUrl = 'https://api.allorigins.win/raw?url=';
+            const apiUrl = 'https://api.binance.com/api/v3/exchangeInfo';
+            
+            const response = await fetch(`${proxyUrl}${encodeURIComponent(apiUrl)}`);
             const data = await response.json();
+            
+            // Check if data.symbols exists before attempting to filter it
+            if (!data || !data.symbols || !Array.isArray(data.symbols)) {
+                console.error('Invalid API response format:', data);
+                throw new Error('Invalid API response format - missing symbols array');
+            }
             
             // Get ALL trading symbols (not just USDT pairs)
             this.allSymbols = data.symbols
@@ -66,17 +76,46 @@ class CompleteCryptoDashboard {
         } catch (error) {
             console.error('Error loading symbols:', error);
             this.updateConnectionStatus(false, 'Failed to load symbols');
+            
+            // Fallback to saved data if API failed
+            if (this.priceData.size > 0) {
+                console.log('Using saved data as fallback since API failed');
+                this.updateConnectionStatus(true, `Using ${this.priceData.size} symbols from saved data`);
+                this.renderTable();
+            }
         }
     }
 
     async loadInitialPrices() {
         try {
+            console.log('Loading initial price data...');
+            // Use a CORS proxy to avoid CORS issues when running locally
+            const proxyUrl = 'https://api.allorigins.win/raw?url=';
+            const apiUrl = 'https://api.binance.com/api/v3/ticker/24hr';
+            
+            let attempts = 0;
+            let maxAttempts = 3;
+            let response;
+            
+            while (attempts < maxAttempts) {
+                try {
+                    response = await fetch(`${proxyUrl}${encodeURIComponent(apiUrl)}`);
+                    if (response.ok) break;
+                    throw new Error(`Failed attempt ${attempts + 1}: ${response.status}`);
+                } catch (fetchError) {
+                    console.warn(`Fetch attempt ${attempts + 1} failed:`, fetchError);
+                    attempts++;
+                    if (attempts >= maxAttempts) throw fetchError;
+                    // Wait before retrying
+                    await new Promise(r => setTimeout(r, 1000 * attempts));
+                }
+            }
+            
+            const data = await response.json();
+            
             this.updateConnectionStatus(false, 'Loading price data...');
             
-            const response = await fetch('https://api.binance.com/api/v3/ticker/24hr');
-            const tickers = await response.json();
-            
-            tickers.forEach(ticker => {
+            data.forEach(ticker => {
                 const symbolData = this.allSymbols.find(s => s.symbol === ticker.symbol);
                 if (symbolData) {
                     this.priceData.set(ticker.symbol, {
