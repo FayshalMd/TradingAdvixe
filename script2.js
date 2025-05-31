@@ -18,12 +18,37 @@ CompleteCryptoDashboard.prototype.setupMultipleWebSocketConnections = function(s
     this.webSockets = [];
     const STREAMS_PER_CONNECTION = 100; // Reduced from 150 to 100 for better reliability
     
+    // Check if we should use low-bandwidth mode
+    this.lowBandwidthMode = localStorage.getItem('lowBandwidthMode') === 'true';
+    
     // Prioritize USDT pairs as they're most frequently used
     const usdtPairs = symbols.filter(s => s.endsWith('USDT'));
-    const otherPairs = symbols.filter(s => !s.endsWith('USDT'));
+    const btcPairs = symbols.filter(s => s.endsWith('BTC'));
+    const ethPairs = symbols.filter(s => s.endsWith('ETH'));
+    const otherPairs = symbols.filter(s => !s.endsWith('USDT') && !s.endsWith('BTC') && !s.endsWith('ETH'));
+    
+    // In low bandwidth mode, reduce the number of monitored pairs
+    const maxPairsToMonitor = this.lowBandwidthMode ? 300 : symbols.length;
+    
+    // Sort by volume and take top pairs
+    const sortByVolume = (pairs) => {
+        return pairs.sort((a, b) => {
+            const volumeA = this.priceData.get(a)?.quoteVolume || 0;
+            const volumeB = this.priceData.get(b)?.quoteVolume || 0;
+            return volumeB - volumeA;
+        });
+    };
+    
+    // Get top pairs by volume for each category
+    const topUsdtPairs = sortByVolume(usdtPairs).slice(0, Math.round(maxPairsToMonitor * 0.7));
+    const topBtcPairs = sortByVolume(btcPairs).slice(0, Math.round(maxPairsToMonitor * 0.15));
+    const topEthPairs = sortByVolume(ethPairs).slice(0, Math.round(maxPairsToMonitor * 0.1));
+    const topOtherPairs = sortByVolume(otherPairs).slice(0, Math.round(maxPairsToMonitor * 0.05));
     
     // Put USDT pairs in the first connections for faster updates
-    const sortedSymbols = [...usdtPairs, ...otherPairs];
+    const sortedSymbols = [...topUsdtPairs, ...topBtcPairs, ...topEthPairs, ...topOtherPairs];
+    
+    console.log(`Using ${sortedSymbols.length}/${symbols.length} pairs in ${this.lowBandwidthMode ? 'low' : 'standard'} bandwidth mode`);
     
     // Split symbols into chunks
     const chunks = [];
@@ -31,7 +56,7 @@ CompleteCryptoDashboard.prototype.setupMultipleWebSocketConnections = function(s
         chunks.push(sortedSymbols.slice(i, i + STREAMS_PER_CONNECTION));
     }
 
-    console.log(`Creating ${chunks.length} WebSocket connections for complete coverage`);
+    console.log(`Creating ${chunks.length} WebSocket connections for coverage`);
 
     // Check if this is a fresh page load
     const isPageReload = document.readyState === "complete" && 
@@ -43,7 +68,7 @@ CompleteCryptoDashboard.prototype.setupMultipleWebSocketConnections = function(s
     }
 
     // Create first few connections immediately for instant updates on page load
-    const fastConnectCount = Math.min(3, chunks.length); // First 3 connections without delay
+    const fastConnectCount = Math.min(2, chunks.length); // First 2 connections without delay (reduced from 3)
     
     // Connect first chunks immediately (these contain the USDT pairs)
     for (let i = 0; i < fastConnectCount; i++) {
@@ -55,10 +80,10 @@ CompleteCryptoDashboard.prototype.setupMultipleWebSocketConnections = function(s
     
     // Connect remaining chunks with staggered timing
     for (let i = fastConnectCount; i < chunks.length; i++) {
-        // Reduced delays for faster overall connection
+        // Increased delays for lower bandwidth usage
         const delay = isPageReload ? 
-            Math.min(100 * i, 1000) : // Faster connection on page reload
-            Math.min(300 * Math.pow(1.2, i), 2000); // Normal staggered timing
+            Math.min(500 * i, 3000) : // Slower connection on page reload
+            Math.min(800 * Math.pow(1.2, i), 5000); // Slower staggered timing
             
         setTimeout(() => {
             this.createWebSocketConnection(chunks[i], i, false);
@@ -76,7 +101,23 @@ CompleteCryptoDashboard.prototype.createWebSocketConnection = function(symbols, 
         `${symbol.toLowerCase()}@ticker`
     ).join('/');
 
-    const wsUrl = `wss://stream.binance.com:9443/stream?streams=${streams}`;
+    // Use JavaScript native WebSocket without additional headers
+    // This helps avoid CORS issues in some environments
+    let wsUrl;
+    try {
+        // Try secure connection first
+        wsUrl = `wss://stream.binance.com:9443/stream?streams=${streams}`;
+        
+        // For local development, you might need to use a fallback
+        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+            console.log(`Using alternative WebSocket endpoint for local development (connection ${connectionIndex + 1})`);
+            // Additional fallback mechanism can be added here if needed
+        }
+    } catch (error) {
+        console.error('Error creating WebSocket URL:', error);
+        wsUrl = `wss://stream.binance.com:9443/stream?streams=${streams}`;
+    }
+
     const ws = new WebSocket(wsUrl);
 
     // Set connection timeout (shorter for priority connections)
@@ -84,8 +125,23 @@ CompleteCryptoDashboard.prototype.createWebSocketConnection = function(symbols, 
         if (ws.readyState === WebSocket.CONNECTING) {
             console.log(`WebSocket ${connectionIndex + 1} connection timeout`);
             ws.close();
+            
+            // For local development, try reconnecting with exponential backoff
+            if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+                const reconnectDelay = Math.min(1000 * Math.pow(1.5, this.reconnectAttempts || 0), 30000);
+                console.log(`Will attempt reconnection in ${reconnectDelay/1000} seconds...`);
+                
+                setTimeout(() => {
+                    if (this.isOnline) {
+                        this.createWebSocketConnection(symbols, connectionIndex, isPriorityConnection);
+                    }
+                }, reconnectDelay);
+                
+                if (!this.reconnectAttempts) this.reconnectAttempts = 0;
+                this.reconnectAttempts++;
+            }
         }
-    }, isPriorityConnection ? 5000 : 10000);
+    }, isPriorityConnection ? 8000 : 15000); // Increased timeouts
 
     ws.onopen = () => {
         clearTimeout(connectionTimeout);
@@ -124,14 +180,26 @@ CompleteCryptoDashboard.prototype.createWebSocketConnection = function(symbols, 
         
         // Only attempt reconnection if we're online and not intentionally closing
         if (this.isOnline && event.code !== 1000) {
-            const delay = 5000 + (connectionIndex * 1000) + (this.reconnectAttempts * 2000);
-            console.log(`Reconnecting WebSocket ${connectionIndex + 1} in ${delay/1000}s`);
+            // Use exponential backoff for reconnection
+            const baseDelay = 5000;
+            const maxDelay = 30000; // Maximum 30 seconds
+            
+            const backoffFactor = Math.min(Math.pow(1.5, this.reconnectAttempts || 0), 6);
+            const delay = Math.min(baseDelay * backoffFactor + (connectionIndex * 1000), maxDelay);
+            
+            console.log(`Reconnecting WebSocket ${connectionIndex + 1} in ${(delay/1000).toFixed(1)}s (attempt: ${this.reconnectAttempts || 0})`);
             
             setTimeout(() => {
                 if (this.isOnline) {
                     this.createWebSocketConnection(symbols, connectionIndex);
+                    
+                    // Increment reconnect attempts for exponential backoff
+                    if (!this.reconnectAttempts) this.reconnectAttempts = 0;
+                    this.reconnectAttempts++;
                 }
             }, delay);
+        } else if (!this.isOnline) {
+            console.log(`Not reconnecting WebSocket ${connectionIndex + 1} - offline mode`);
         }
     };
 
@@ -176,8 +244,10 @@ CompleteCryptoDashboard.prototype.handlePriceUpdate = function(data) {
         existing.lastUpdated = Date.now();
     }
     
-    // Immediate update of price in UI
-    this.updatePriceUI(symbol, priceChanged);
+    // Only update UI if price actually changed (reduces CPU usage)
+    if (priceChanged) {
+        this.updatePriceUI(symbol, priceChanged);
+    }
     
     // Process other data updates with optimized throttling
     if (!this.fullUpdateThrottle) {
@@ -187,8 +257,11 @@ CompleteCryptoDashboard.prototype.handlePriceUpdate = function(data) {
     const now = Date.now();
     const lastFullUpdate = this.fullUpdateThrottle.get(symbol) || 0;
     
-    // Process full data updates every 200ms for each symbol (faster than before)
-    if (now - lastFullUpdate > 200) {
+    // Use longer throttle interval for less important updates
+    // In low bandwidth mode: 1000ms, Standard mode: 500ms
+    const throttleInterval = this.lowBandwidthMode ? 1000 : 500;
+    
+    if (now - lastFullUpdate > throttleInterval) {
         this.fullUpdateThrottle.set(symbol, now);
         
         const change = parseFloat(data.P);
@@ -211,15 +284,20 @@ CompleteCryptoDashboard.prototype.handlePriceUpdate = function(data) {
         existing.quoteVolume = quoteVolume;
         existing.tradeCount = count;
 
-        // Batch signal updates more efficiently
-        this.queueSignalUpdate(symbol);
+        // In low bandwidth mode, queue signal updates less frequently
+        if (!this.lowBandwidthMode || Math.random() < 0.2) {
+            this.queueSignalUpdate(symbol);
+        }
+        
+        // Update stats less frequently in low bandwidth mode
+        const statsInterval = this.lowBandwidthMode ? 5000 : 2000;
         
         // Schedule stats update if not already pending
         if (!this.statsUpdateTimer) {
             this.statsUpdateTimer = setTimeout(() => {
                 this.updateStats();
                 this.statsUpdateTimer = null;
-            }, 1000); // More frequent stats updates
+            }, statsInterval);
         }
     }
 };
@@ -231,7 +309,7 @@ CompleteCryptoDashboard.prototype.updatePriceUI = function(symbol, priceChanged)
     const data = this.priceData.get(symbol);
     if (!data) return;
     
-    // Update price cell immediately
+    // Always update price cell immediately for real-time price
     row.children[1].textContent = `${this.formatPrice(data.price)} ${data.quoteAsset}`;
     
     // Flash effect on price change
@@ -241,7 +319,7 @@ CompleteCryptoDashboard.prototype.updatePriceUI = function(symbol, priceChanged)
         setTimeout(() => row.classList.remove(flashClass), 300); // Shorter flash duration
         
         // Update timestamp immediately on price change for instant feedback
-        const timestampCell = row.children[10];
+        const timestampCell = row.children[8]; // Updated index for removed columns
         timestampCell.textContent = this.formatTimestamp(data.lastUpdated);
         
         // Add live indicator class
@@ -252,9 +330,10 @@ CompleteCryptoDashboard.prototype.updatePriceUI = function(symbol, priceChanged)
     }
     
     // Update full row if visible and not recently updated
+    // Make UI updates faster with reduced throttling
     if (!this.uiUpdateThrottle) this.uiUpdateThrottle = new Map();
     const now = Date.now();
-    if (now - (this.uiUpdateThrottle.get(symbol) || 0) > 100) { // Faster 100ms throttle
+    if (now - (this.uiUpdateThrottle.get(symbol) || 0) > 50) { // Faster 50ms throttle (down from 100ms)
         this.uiUpdateThrottle.set(symbol, now);
         this.updateTableRowImmediate(symbol);
     }
@@ -282,7 +361,7 @@ CompleteCryptoDashboard.prototype.processPendingSignalUpdates = function() {
     this.signalUpdateTimer = null;
 
     // Limit batch size to prevent UI blocking
-    const BATCH_SIZE = 5; // Reduced from 10 to 5
+    const BATCH_SIZE = 10; // Increased from 5 to 10
     let currentIndex = 0;
 
     const processBatch = () => {
@@ -315,10 +394,8 @@ CompleteCryptoDashboard.prototype.processPendingSignalUpdates = function() {
         currentIndex += BATCH_SIZE;
         
         if (currentIndex < symbolsToUpdate.length) {
-            // Add delay between batches to prevent overwhelming
-            setTimeout(() => {
-                processBatch();
-            }, 10); // 10ms delay between batches
+            // Process next batch immediately with requestAnimationFrame for better performance
+            requestAnimationFrame(processBatch);
         }
     };
 
