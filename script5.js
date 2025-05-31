@@ -1,9 +1,22 @@
 // Event Handling, Updates and Initialization
 CompleteCryptoDashboard.prototype.startUpdateLoop = function() {
-    // Update timestamps every 1 second (dractically reduced from 10 seconds)
+    // Update timestamps based on bandwidth mode preference
+    const updateFrequency = this.lowBandwidthMode ? 1000 : 500; // 1s in low bandwidth, 500ms in standard
+    
     this.timestampInterval = setInterval(() => {
         // More efficient timestamp updates using data attributes
-        document.querySelectorAll('.timestamp').forEach(cell => {
+        // In low bandwidth mode, update fewer timestamps at once
+        const visibleTimestamps = Array.from(document.querySelectorAll('.timestamp:not(.processed)'));
+        
+        // Process only visible timestamps first or limit number in low bandwidth mode
+        const timestampsToUpdate = this.lowBandwidthMode ? 
+            visibleTimestamps.slice(0, 20) :  // Process only 20 timestamps per interval in low bandwidth mode
+            visibleTimestamps;
+        
+        timestampsToUpdate.forEach(cell => {
+            // Mark as processed to avoid excessive updates
+            cell.classList.add('processed');
+            
             // Get stored timestamp from data attribute if available
             const storedTimestamp = cell.getAttribute('data-timestamp');
             if (storedTimestamp) {
@@ -26,9 +39,22 @@ CompleteCryptoDashboard.prototype.startUpdateLoop = function() {
                 }
             }
         });
-    }, 1000);
+        
+        // Reset processed flag periodically to allow updates again
+        if (this._timestampCycle === undefined) this._timestampCycle = 0;
+        this._timestampCycle++;
+        
+        if (this._timestampCycle >= 10) {
+            document.querySelectorAll('.timestamp.processed').forEach(cell => {
+                cell.classList.remove('processed');
+            });
+            this._timestampCycle = 0;
+        }
+    }, updateFrequency);
 
-    // Periodic signal recalculation for symbols without real-time updates
+    // Periodic signal recalculation adjusted for bandwidth mode
+    const recalculationInterval = this.lowBandwidthMode ? 120000 : 60000; // 2 minutes in low bandwidth mode
+    
     this.signalRecalculationInterval = setInterval(() => {
         console.log('Performing periodic signal recalculation...');
         this.calculateAllSignals();
@@ -38,19 +64,23 @@ CompleteCryptoDashboard.prototype.startUpdateLoop = function() {
         if (this.shouldRefreshTable()) {
             this.renderTable();
         }
-    }, 60000); // Increased from 30 seconds to 60 seconds
+    }, recalculationInterval);
 
-    // Memory cleanup every 2 minutes (reduced from 5)
+    // Memory cleanup adjusted for bandwidth mode
+    const cleanupInterval = this.lowBandwidthMode ? 180000 : 120000; // 3 minutes in low bandwidth mode
+    
     this.memoryCleanupInterval = setInterval(() => {
         this.performMemoryCleanup();
-    }, 120000);
+    }, cleanupInterval);
 
-    // Connection health check every 2 minutes (increased from 1)
+    // Connection health check
+    const healthCheckInterval = this.lowBandwidthMode ? 180000 : 120000; // 3 minutes in low bandwidth mode
+    
     this.healthCheckInterval = setInterval(() => {
         this.performHealthCheck();
-    }, 120000);
+    }, healthCheckInterval);
 
-    // Performance monitoring every 30 seconds
+    // Performance monitoring
     this.performanceInterval = setInterval(() => {
         this.monitorPerformance();
     }, 30000);
@@ -59,10 +89,13 @@ CompleteCryptoDashboard.prototype.startUpdateLoop = function() {
 CompleteCryptoDashboard.prototype.startSentimentUpdates = function() {
     this.updateSentiment(); // Initial update
     
-    // Update sentiment every 5 minutes
+    // Update sentiment less frequently in low bandwidth mode
+    const updateInterval = this.lowBandwidthMode ? 600000 : 300000; // 10 mins vs 5 mins
+    
+    // Update sentiment every 5 minutes (10 minutes in low bandwidth mode)
     this.sentimentInterval = setInterval(() => {
         this.updateSentiment();
-    }, 300000); // 5 minutes
+    }, updateInterval);
 };
 
 CompleteCryptoDashboard.prototype.updateSentiment = async function() {
@@ -99,38 +132,54 @@ CompleteCryptoDashboard.prototype.updateSentiment = async function() {
 };
 
 CompleteCryptoDashboard.prototype.displaySentiment = function(value, label, timestamp, isError = false) {
-    const needle = document.getElementById('greedNeedle');
-    const valueEl = document.getElementById('greedValue');
-    const labelEl = document.getElementById('greedLabel');
-    const descriptionEl = document.getElementById('greedDescription');
-    const updatedEl = document.getElementById('sentimentUpdated');
+    const needle = this.getCachedElement('greedNeedle');
+    const valueEl = this.getCachedElement('greedValue');
+    const labelEl = this.getCachedElement('greedLabel');
+    const descriptionEl = this.getCachedElement('greedDescription');
+    const updatedEl = this.getCachedElement('sentimentUpdated');
 
-    // Calculate rotation (0 = Extreme Fear, 180 = Extreme Greed)
-    // Meter range is -90 (left) to +90 (right)
-    const rotation = (value / 100) * 180 - 90;
-    
-    needle.style.transform = `translateX(-50%) rotate(${rotation}deg)`;
-    valueEl.textContent = value;
-    labelEl.textContent = label;
-    labelEl.style.color = this.getSentimentColor(value);
-    
-    descriptionEl.textContent = this.getSentimentDescription(value);
+    // Schedule render to batch updates
+    this.scheduleRender(() => {
+        // Calculate rotation (0 = Extreme Fear, 180 = Extreme Greed)
+        // Meter range is -90 (left) to +90 (right)
+        const rotation = (value / 100) * 180 - 90;
+        
+        needle.style.transform = `translateX(-50%) rotate(${rotation}deg)`;
+        valueEl.textContent = value;
+        labelEl.textContent = label;
+        labelEl.style.color = this.getSentimentColor(value);
+        
+        descriptionEl.textContent = this.getSentimentDescription(value);
+    });
 
     if (isError) {
-        updatedEl.textContent = 'Last updated: Error (Using cached value)';
-        updatedEl.style.color = '#ff6b6b';
+        this.scheduleRender(() => {
+            updatedEl.textContent = 'Last updated: Error (Using cached value)';
+            updatedEl.style.color = '#ff6b6b';
+        });
     } else if (timestamp > 0) {
-        updatedEl.textContent = `Last updated: ${new Date(timestamp).toLocaleString()}`;
-        updatedEl.style.color = '#666';
+        this.scheduleRender(() => {
+            updatedEl.textContent = `Last updated: ${new Date(timestamp).toLocaleString()}`;
+            updatedEl.style.color = '#666';
+        });
     } else {
-        updatedEl.textContent = 'Last updated: Loading...';
-        updatedEl.style.color = '#666';
+        this.scheduleRender(() => {
+            updatedEl.textContent = 'Last updated: Loading...';
+            updatedEl.style.color = '#666';
+        });
     }
     
-    // Update market indicators (dummy data for now, replace with actual API calls)
-    document.getElementById('volatilityValue').textContent = 'Medium';
-    document.getElementById('volumeValue').textContent = this.formatVolume(this.getTotalMarketVolume());
-    document.getElementById('dominanceValue').textContent = '45.2%'; // Example
+    // Schedule additional UI updates
+    this.scheduleRender(() => {
+        // Update market indicators (dummy data for now, replace with actual API calls)
+        const volatilityValue = this.getCachedElement('volatilityValue');
+        const volumeValue = this.getCachedElement('volumeValue');
+        const dominanceValue = this.getCachedElement('dominanceValue');
+        
+        volatilityValue.textContent = 'Medium';
+        volumeValue.textContent = this.formatVolume(this.getTotalMarketVolume());
+        dominanceValue.textContent = '45.2%'; // Example
+    });
 };
 
 CompleteCryptoDashboard.prototype.getSentimentColor = function(value) {
@@ -196,6 +245,39 @@ CompleteCryptoDashboard.prototype.setupEventListeners = function() {
         this.currentSort = e.target.value;
         this.renderTable();
     });
+    
+    // Bandwidth mode toggle
+    const bandwidthToggle = document.getElementById('bandwidthToggle');
+    
+    // Set the initial state from localStorage
+    bandwidthToggle.checked = localStorage.getItem('lowBandwidthMode') === 'true';
+    this.lowBandwidthMode = bandwidthToggle.checked;
+    
+    // Add change event listener
+    bandwidthToggle.addEventListener('change', () => {
+        // Save setting to localStorage
+        localStorage.setItem('lowBandwidthMode', bandwidthToggle.checked);
+        this.lowBandwidthMode = bandwidthToggle.checked;
+        
+        // Show user feedback
+        const status = document.getElementById('connectionStatus');
+        status.innerHTML = `⚙️ ${this.lowBandwidthMode ? 'Low' : 'Standard'} bandwidth mode activated. Reloading connections...`;
+        
+        // Close and reset existing connections
+        if (this.webSockets) {
+            this.webSockets.forEach(ws => {
+                if (ws && ws.readyState !== WebSocket.CLOSED) {
+                    ws.close();
+                }
+            });
+            this.webSockets = [];
+        }
+        
+        // Delay slightly before reconnecting
+        setTimeout(() => {
+            this.setupWebSocket();
+        }, 500);
+    });
 
     // Table header sorting with touch support
     document.querySelectorAll('th[data-sort]').forEach(th => {
@@ -230,6 +312,28 @@ CompleteCryptoDashboard.prototype.setupEventListeners = function() {
             btn.classList.add('active');
             this.quickFilter = btn.dataset.filter;
             this.currentPage = 1;
+            
+            // For "All" button, also reload and refresh everything
+            if (btn.dataset.filter === 'all') {
+                // Update connection status to show reload is happening
+                this.updateConnectionStatus(false, 'Refreshing data...');
+                
+                // Recalculate all signals
+                this.calculateAllSignals();
+                
+                // Update market sentiment
+                this.updateSentiment();
+                
+                // Perform reconnection to refresh WebSocket data
+                this.handleReconnection();
+                
+                // Force refresh table
+                this.lastTableRefresh = 0;
+                
+                // Update statistics
+                this.updateStats();
+            }
+            
             this.renderTable();
         };
 
@@ -338,7 +442,7 @@ CompleteCryptoDashboard.prototype.startClock = function() {
     
     // Update immediately and then every second
     updateClock();
-    setInterval(updateClock, 1000);
+    setInterval(updateClock, 500); // Update every 500ms for smoother seconds display
 };
 
 CompleteCryptoDashboard.prototype.isMobile = function() {
@@ -639,4 +743,40 @@ CompleteCryptoDashboard.prototype.formatTimestamp = function(timestamp) {
     if (minutes < 60) return `${minutes}m ago`;
     const hours = Math.floor(minutes / 60);
     return `${hours}h ago`;
+};
+
+// Performance optimization: Cache frequently accessed DOM elements
+CompleteCryptoDashboard.prototype.getCachedElement = function(id) {
+    if (!this._domCache) this._domCache = new Map();
+    if (!this._domCache.has(id)) {
+        const element = document.getElementById(id);
+        this._domCache.set(id, element);
+    }
+    return this._domCache.get(id);
+};
+
+// Use RAF for smoother UI updates
+CompleteCryptoDashboard.prototype.scheduleRender = function(callback) {
+    if (!this._renderQueue) this._renderQueue = [];
+    this._renderQueue.push(callback);
+    
+    if (!this._renderScheduled) {
+        this._renderScheduled = true;
+        requestAnimationFrame(() => {
+            const queue = this._renderQueue || [];
+            this._renderQueue = [];
+            this._renderScheduled = false;
+            
+            // Execute all queued render operations
+            queue.forEach(fn => {
+                try {
+                    fn();
+                } catch (err) {
+                    console.error('Render error:', err);
+                }
+            });
+        });
+    }
+    
+    return this;
 };
