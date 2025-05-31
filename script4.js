@@ -167,7 +167,7 @@ CompleteCryptoDashboard.prototype.renderTable = function() {
     tbody.innerHTML = '';
 
     if (pageData.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="11" class="loading">No cryptocurrencies match your filters</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9" class="loading">No cryptocurrencies match your filters</td></tr>';
         return;
     }
 
@@ -190,8 +190,6 @@ CompleteCryptoDashboard.prototype.renderTable = function() {
             <td class="price">${this.formatPrice(data.price)} ${data.quoteAsset}</td>
             <td style="color: ${data.change >= 0 ? '#00d4aa' : '#ff6b6b'}">${data.change.toFixed(2)}%</td>
             <td>${this.formatVolume(data.quoteVolume)}</td>
-            <td>${this.formatVolume(data.buyVolume || 0)}</td>
-            <td>${this.formatVolume(data.sellVolume || 0)}</td>
             <td style="color: ${data.deltaVolume >= 0 ? '#00d4aa' : '#ff6b6b'}">${data.deltaVolume ? data.deltaVolume.toFixed(2)+'%' : 'N/A'}</td>
             <td><span class="signal ${this.getSignalClass(data.symbol)}">${signalText}</span></td>
             <td class="confidence ${confidenceLabel.toLowerCase().replace(' ', '-')}">${data.confidence}%</td>
@@ -225,12 +223,12 @@ CompleteCryptoDashboard.prototype.updateTableRowImmediate = function(symbol) {
     row.children[3].textContent = this.formatVolume(data.quoteVolume);
     
     // Update delta volume (buyers vs sellers indicator)
-    const deltaCell = row.children[6]; 
+    const deltaCell = row.children[4]; 
     deltaCell.textContent = data.deltaVolume ? data.deltaVolume.toFixed(2)+'%' : 'N/A';
     deltaCell.style.color = data.deltaVolume >= 0 ? '#00d4aa' : '#ff6b6b';
     
     // Fast timestamp update
-    row.children[10].textContent = this.formatTimestamp(data.lastUpdated);
+    row.children[8].textContent = this.formatTimestamp(data.lastUpdated);
 
     // Apply optimized flash effect for price changes - shorter duration
     if (data.priceChange) {
@@ -268,24 +266,21 @@ CompleteCryptoDashboard.prototype.updateTableRow = function(symbol, signalChange
         setTimeout(() => row.classList.remove(flashClass), 500);
     }
 
-    // Update all cells
     row.children[1].textContent = `${this.formatPrice(data.price)} ${data.quoteAsset}`;
     row.children[2].textContent = `${data.change.toFixed(2)}%`;
     row.children[2].style.color = data.change >= 0 ? '#00d4aa' : '#ff6b6b';
     row.children[3].textContent = this.formatVolume(data.quoteVolume);
-    row.children[4].textContent = this.formatVolume(data.buyVolume || 0);
-    row.children[5].textContent = this.formatVolume(data.sellVolume || 0);
     
     // Update delta volume with color coding
-    const deltaCell = row.children[6];
+    const deltaCell = row.children[4];
     deltaCell.textContent = data.deltaVolume ? data.deltaVolume.toFixed(2)+'%' : 'N/A';
     deltaCell.style.color = data.deltaVolume >= 0 ? '#00d4aa' : '#ff6b6b';
     
-    row.children[7].innerHTML = `<span class="signal ${this.getSignalClass(data.symbol)}">${signalText}</span>`;
-    row.children[8].textContent = `${data.confidence}%`;
-    row.children[8].className = `confidence ${confidenceLabel.toLowerCase().replace(' ', '-')}`;
-    row.children[9].innerHTML = `<span class="trade-result ${tradeResult.status}">${tradeResult.text}</span>`;
-    row.children[10].textContent = this.formatTimestamp(data.lastUpdated);
+    row.children[5].innerHTML = `<span class="signal ${this.getSignalClass(data.symbol)}">${signalText}</span>`;
+    row.children[6].textContent = `${data.confidence}%`;
+    row.children[6].className = `confidence ${confidenceLabel.toLowerCase().replace(' ', '-')}`;
+    row.children[7].innerHTML = `<span class="trade-result ${tradeResult.status}">${tradeResult.text}</span>`;
+    row.children[8].textContent = this.formatTimestamp(data.lastUpdated);
 };
 
 CompleteCryptoDashboard.prototype.updateStats = function() {
@@ -295,9 +290,18 @@ CompleteCryptoDashboard.prototype.updateStats = function() {
         stats[data.signal]++;
     }
 
-    document.getElementById('buySignals').textContent = stats.BUY;
-    document.getElementById('sellSignals').textContent = stats.SELL;
-    document.getElementById('holdSignals').textContent = stats.HOLD;
+    // Use cached DOM elements and schedule render for better performance
+    this.scheduleRender(() => {
+        const totalPairsEl = this.getCachedElement('totalPairs');
+        const buySignalsEl = this.getCachedElement('buySignals');
+        const sellSignalsEl = this.getCachedElement('sellSignals');
+        const holdSignalsEl = this.getCachedElement('holdSignals');
+        
+        totalPairsEl.textContent = this.priceData.size;
+        buySignalsEl.textContent = stats.BUY;
+        sellSignalsEl.textContent = stats.SELL;
+        holdSignalsEl.textContent = stats.HOLD;
+    });
 };
 
 CompleteCryptoDashboard.prototype.updatePagination = function(totalItems) {
