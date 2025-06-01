@@ -61,7 +61,7 @@ body {
     border: 1px solid #404040;
     border-radius: 15px;
     padding: 20px;
-    margin: 20px auto;
+    margin: 40px auto 20px auto;
     max-width: 500px;
     text-align: center;
     backdrop-filter: blur(10px);
@@ -324,6 +324,74 @@ body {
     outline: none;
     border-color: #00d4aa;
     box-shadow: 0 0 10px rgba(0, 212, 170, 0.3);
+}
+
+/* Toggle switch for low bandwidth mode */
+.toggle-container {
+    display: flex;
+    align-items: center;
+    margin: 0 5px;
+}
+
+.toggle-label {
+    margin-left: 10px;
+    font-size: 0.9rem;
+    color: #e0e0e0;
+    white-space: nowrap;
+}
+
+.toggle-switch {
+    position: relative;
+    display: inline-block;
+    width: 50px;
+    height: 24px;
+}
+
+.toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #2a2a2a;
+    transition: .4s;
+    border: 1px solid #404040;
+}
+
+.slider:before {
+    position: absolute;
+    content: "";
+    height: 16px;
+    width: 16px;
+    left: 4px;
+    bottom: 3px;
+    background-color: #e0e0e0;
+    transition: .4s;
+}
+
+input:checked + .slider {
+    background-color: #00d4aa;
+    border-color: #00d4aa;
+}
+
+input:checked + .slider:before {
+    transform: translateX(26px);
+    background-color: #ffffff;
+}
+
+.slider.round {
+    border-radius: 24px;
+}
+
+.slider.round:before {
+    border-radius: 50%;
 }
 
 .quick-filters {
@@ -647,7 +715,7 @@ tr:hover {
     border: 1px solid #ff6b6b;
     border-radius: 10px;
     padding: 20px;
-    margin: 30px auto;
+    margin: 20px auto;
     max-width: 800px;
     text-align: center;
 }
@@ -679,8 +747,6 @@ tr:hover {
     .controls { flex-direction: column; }
     .search-container { min-width: 250px; }
     .filter-select, .sort-select { min-width: 150px; }
-    table { font-size: 0.85rem; }
-    th, td { padding: 8px 6px; }
     .stats-bar { gap: 15px; }
 }
 
@@ -750,82 +816,40 @@ tr:hover {
         border-radius: 10px;
     }
 
-    table {
-        font-size: 0.75rem;
-        min-width: 100%;
+    .table-container {
+        overflow-y: auto;
+        max-height: none;
     }
 
-    th, td {
-        padding: 6px 4px;
-        white-space: nowrap;
+    tbody td {
+        max-width: none;
+        overflow: visible;
+        text-overflow: clip;
     }
 
-    th {
-        padding: 10px 4px;
-        font-size: 0.8rem;
+    .symbol { min-width: auto; }
+    .price { min-width: auto; }
+    td:nth-child(3) { min-width: auto; }
+
+    /* Add spacing between cards for better UX */
+    #signalsTable {
+        margin-bottom: 15px;
     }
 
-    /* Make specific columns more mobile-friendly */
-    .symbol {
-        font-size: 0.8rem;
-        min-width: 60px;
+    /* Improve loading state on mobile */
+    #signalsTableBody .loading {
+        padding: 30px 15px;
+        border-radius: 8px;
+        background: rgba(30, 30, 30, 0.7);
+        text-align: center;
     }
 
-    .price {
-        font-size: 0.8rem;
-        min-width: 70px;
-    }
-
-    .signal {
-        padding: 4px 6px;
-        font-size: 0.7rem;
-        min-width: 60px;
-    }
-
-    .trade-result {
-        padding: 4px 6px;
-        font-size: 0.7rem;
-        min-width: 80px;
-    }
-
-    .confidence {
-        font-size: 0.8rem;
-    }
-
-    .timestamp {
-        font-size: 0.7rem;
-        min-width: 50px;
-    }
-
-    /* Mobile pagination */
-    .pagination {
-        gap: 5px;
-        flex-wrap: wrap;
+    /* Make pagination more mobile-friendly */
+    #pagination {
+        padding: 10px 5px;
+        background: rgba(30, 30, 30, 0.7);
+        border-radius: 8px;
         margin-top: 15px;
-    }
-
-    .pagination button {
-        padding: 6px 10px;
-        font-size: 0.8rem;
-    }
-
-    .pagination select {
-        font-size: 0.8rem;
-        padding: 6px 8px;
-    }
-
-    /* Mobile disclaimer */
-    .disclaimer {
-        margin: 20px auto;
-        padding: 15px;
-    }
-
-    .disclaimer h3 {
-        font-size: 1rem;
-    }
-
-    .disclaimer p {
-        font-size: 0.85rem;
     }
 }
 
@@ -944,6 +968,22 @@ tr:hover {
         background: linear-gradient(90deg, rgba(42, 42, 42, 1) 0%, rgba(42, 42, 42, 0) 10%, rgba(42, 42, 42, 0) 90%, rgba(42, 42, 42, 1) 100%),
                    rgba(42, 42, 42, 0.8);
     }
+
+    /* Fix mobile table display issues */
+    .table-container {
+        overflow-y: auto;
+        max-height: none;
+    }
+
+    tbody td {
+        max-width: none;
+        overflow: visible;
+        text-overflow: clip;
+    }
+
+    .symbol { min-width: auto; }
+    .price { min-width: auto; }
+    td:nth-child(3) { min-width: auto; }
 }
 
 /* Loading state optimizations for mobile */
@@ -956,5 +996,185 @@ tr:hover {
     .spinner {
         width: 16px;
         height: 16px;
+    }
+}
+
+/* Complete mobile table redesign for better responsiveness */
+@media (max-width: 768px) {
+    /* Reset table layout */
+    table, thead, tbody, tr, th, td {
+        display: block;
+        width: 100%;
+        box-sizing: border-box;
+    }
+    
+    /* Hide table header for mobile view */
+    thead tr {
+        position: absolute;
+        top: -9999px;
+        left: -9999px;
+        visibility: hidden;
+    }
+    
+    /* Create card-like rows */
+    tbody tr {
+        border: 1px solid #404040;
+        border-radius: 8px;
+        margin-bottom: 15px;
+        background: rgba(30, 30, 30, 0.9);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        overflow: hidden;
+    }
+    
+    /* Style each cell like a row with label + value */
+    tbody td {
+        position: relative;
+        padding: 10px 8px 10px 45%;
+        min-height: 40px;
+        text-align: right;
+        border-bottom: 1px solid #333;
+        line-height: 1.4;
+        word-break: break-word;
+    }
+    
+    /* Remove bottom border from last cell */
+    tbody tr td:last-child {
+        border-bottom: none;
+    }
+    
+    /* Add cell labels for mobile view */
+    tbody td::before {
+        content: attr(data-label);
+        position: absolute;
+        top: 50%;
+        left: 10px;
+        width: 40%;
+        transform: translateY(-50%);
+        white-space: nowrap;
+        text-align: left;
+        font-weight: bold;
+        color: #00d4aa;
+    }
+    
+    /* Reset special styling for certain cells on mobile */
+    .signal, .trade-result {
+        display: inline-block;
+        margin: 0;
+        padding: 4px 8px;
+        font-size: 0.75rem;
+        width: auto;
+        text-align: center;
+    }
+    
+    /* Special styling for the symbol cell (as header) */
+    tbody td.symbol {
+        background: linear-gradient(135deg, rgba(0, 212, 170, 0.2) 0%, rgba(0, 184, 148, 0.2) 100%);
+        font-size: 1rem;
+        text-align: center;
+        font-weight: bold;
+        border-radius: 8px 8px 0 0;
+        border-bottom: 2px solid rgba(0, 212, 170, 0.5);
+        padding: 12px 8px;
+    }
+    
+    /* Symbol cell doesn't need label */
+    tbody td.symbol::before {
+        display: none;
+    }
+    
+    /* Remove white-space nowrap to allow wrapping */
+    tbody td {
+        white-space: normal;
+    }
+    
+    /* Improve column-specific styling */
+    tbody td:nth-child(3) {
+        background: rgba(0, 0, 0, 0.1); /* Change color */
+    }
+    
+    tbody td:nth-child(6) {
+        background: rgba(0, 0, 0, 0.1); /* Signal */
+    }
+    
+    tbody td:nth-child(8) {
+        background: rgba(0, 0, 0, 0.1); /* Trade Result */
+    }
+    
+    /* Fix values alignment for better readability */
+    tbody td.price {
+        font-family: 'Courier New', monospace;
+    }
+    
+    /* Replace horizontal scrolling with card layout */
+    .table-container {
+        overflow-x: hidden !important;
+        padding: 15px;
+        background: rgba(42, 42, 42, 0.8);
+    }
+    
+    /* Hide the swipe indicator since we no longer need horizontal scrolling */
+    .table-container::after {
+        display: none !important;
+    }
+    
+    /* Fix table dimensions */
+    table {
+        display: block;
+        width: 100%;
+        min-width: auto !important;
+        table-layout: auto;
+        font-size: 0.85rem;
+    }
+    
+    /* Fix trade signals in card view */
+    .signal.buy,
+    .signal.sell,
+    .signal.hold,
+    .signal.hold-buy,
+    .signal.hold-sell,
+    .trade-result.trade-now,
+    .trade-result.already-long,
+    .trade-result.already-short,
+    .trade-result.dont-trade,
+    .trade-result.risky-trade,
+    .trade-result.swing-move {
+        display: inline-block !important;
+        width: auto !important;
+        min-width: 80px;
+        box-shadow: none;
+    }
+    
+    /* Adjust confidence cell display */
+    .confidence {
+        text-align: right;
+        padding-right: 15px;
+        font-size: 0.9rem;
+    }
+    
+    /* Fix for loading state during initial load */
+    #signalsTableBody tr td.loading {
+        padding: 30px 15px !important;
+        text-align: center;
+    }
+    
+    /* Fix for any tr with a single cell spanning multiple columns */
+    #signalsTableBody tr td[colspan] {
+        padding: 15px !important;
+        text-align: center;
+    }
+    
+    /* Fix for the "no data" message */
+    #signalsTableBody tr td[colspan]::before {
+        display: none;
+    }
+    
+    /* Fix any conflicting mobile styles */
+    .table-container {
+        max-height: none !important;
+        overflow-x: hidden !important;
+    }
+    
+    tbody td {
+        white-space: normal !important;
     }
 }
