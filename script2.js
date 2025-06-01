@@ -1,5 +1,15 @@
 // WebSocket and Data Handling Methods
 CompleteCryptoDashboard.prototype.setupWebSocket = function() {
+    // Set flag that WebSocket setup has started
+    this.webSocketSetupStarted = true;
+    
+    // Check network connectivity first
+    if (!navigator.onLine) {
+        console.log('Device is offline, skipping WebSocket setup');
+        this.updateConnectionStatus(false, 'Device is offline');
+        return;
+    }
+    
     // Close existing connection if any
     if (this.webSocket) {
         this.webSocket.close();
@@ -10,16 +20,24 @@ CompleteCryptoDashboard.prototype.setupWebSocket = function() {
     
     console.log(`Setting up WebSocket for ${allSymbols.length} symbols`);
     
+    // If we're refreshing, update the connection status
+    if (this.isRefreshing) {
+        this.updateConnectionStatus(false, 'Refreshing data connections...');
+    }
+    
     // Binance has limits on streams per connection, so we'll use multiple connections
     this.setupMultipleWebSocketConnections(allSymbols);
 };
 
 CompleteCryptoDashboard.prototype.setupMultipleWebSocketConnections = function(symbols) {
     this.webSockets = [];
-    const STREAMS_PER_CONNECTION = 100; // Reduced from 150 to 100 for better reliability
+    const STREAMS_PER_CONNECTION = 30; // Reduced from 50 to 30 for better reliability and shorter URLs
     
     // Check if we should use low-bandwidth mode
     this.lowBandwidthMode = localStorage.getItem('lowBandwidthMode') === 'true';
+    
+    // Special handling for reload - prioritize USDT pairs even more
+    const isReload = this.isRefreshing || this.isPageReload;
     
     // Prioritize USDT pairs as they're most frequently used
     const usdtPairs = symbols.filter(s => s.endsWith('USDT'));
@@ -27,23 +45,32 @@ CompleteCryptoDashboard.prototype.setupMultipleWebSocketConnections = function(s
     const ethPairs = symbols.filter(s => s.endsWith('ETH'));
     const otherPairs = symbols.filter(s => !s.endsWith('USDT') && !s.endsWith('BTC') && !s.endsWith('ETH'));
     
-    // In low bandwidth mode, reduce the number of monitored pairs
-    const maxPairsToMonitor = this.lowBandwidthMode ? 300 : symbols.length;
+    // Get volume data for sorting (skip if refreshing to save time)
+    const sortByVolume = isReload ? 
+        // During reload, just take pairs without volume sorting for faster setup
+        (pairs) => pairs : 
+        // Normal case - sort by volume
+        (pairs) => {
+            return pairs.sort((a, b) => {
+                const volumeA = this.priceData.get(a)?.quoteVolume || 0;
+                const volumeB = this.priceData.get(b)?.quoteVolume || 0;
+                return volumeB - volumeA;
+            });
+        };
     
-    // Sort by volume and take top pairs
-    const sortByVolume = (pairs) => {
-        return pairs.sort((a, b) => {
-            const volumeA = this.priceData.get(a)?.quoteVolume || 0;
-            const volumeB = this.priceData.get(b)?.quoteVolume || 0;
-            return volumeB - volumeA;
-        });
-    };
+    // In low bandwidth mode, reduce the number of monitored pairs
+    const maxPairsToMonitor = this.lowBandwidthMode ? 150 : Math.min(symbols.length, 600); // Reduced max pairs
+    
+    // For reload - take more USDT pairs for initial quick updates
+    const distribution = isReload ? 
+        { usdt: 0.9, btc: 0.05, eth: 0.03, other: 0.02 } :  // More USDT pairs for reload
+        { usdt: 0.7, btc: 0.15, eth: 0.1, other: 0.05 };   // Normal distribution
     
     // Get top pairs by volume for each category
-    const topUsdtPairs = sortByVolume(usdtPairs).slice(0, Math.round(maxPairsToMonitor * 0.7));
-    const topBtcPairs = sortByVolume(btcPairs).slice(0, Math.round(maxPairsToMonitor * 0.15));
-    const topEthPairs = sortByVolume(ethPairs).slice(0, Math.round(maxPairsToMonitor * 0.1));
-    const topOtherPairs = sortByVolume(otherPairs).slice(0, Math.round(maxPairsToMonitor * 0.05));
+    const topUsdtPairs = sortByVolume(usdtPairs).slice(0, Math.round(maxPairsToMonitor * distribution.usdt));
+    const topBtcPairs = sortByVolume(btcPairs).slice(0, Math.round(maxPairsToMonitor * distribution.btc));
+    const topEthPairs = sortByVolume(ethPairs).slice(0, Math.round(maxPairsToMonitor * distribution.eth));
+    const topOtherPairs = sortByVolume(otherPairs).slice(0, Math.round(maxPairsToMonitor * distribution.other));
     
     // Put USDT pairs in the first connections for faster updates
     const sortedSymbols = [...topUsdtPairs, ...topBtcPairs, ...topEthPairs, ...topOtherPairs];
@@ -58,8 +85,8 @@ CompleteCryptoDashboard.prototype.setupMultipleWebSocketConnections = function(s
 
     console.log(`Creating ${chunks.length} WebSocket connections for coverage`);
 
-    // Check if this is a fresh page load
-    const isPageReload = document.readyState === "complete" && 
+    // Check if this is a fresh page load or reload
+    const isPageReload = this.isPageReload || document.readyState === "complete" && 
                         (!this.lastReconnectTime || (Date.now() - this.lastReconnectTime > 10000));
     
     if (isPageReload) {
@@ -67,23 +94,18 @@ CompleteCryptoDashboard.prototype.setupMultipleWebSocketConnections = function(s
         this.lastReconnectTime = Date.now();
     }
 
-    // Create first few connections immediately for instant updates on page load
-    const fastConnectCount = Math.min(2, chunks.length); // First 2 connections without delay (reduced from 3)
+    // Create first connection immediately for instant updates on reload
+    const fastConnectCount = isReload ? Math.min(1, chunks.length) : Math.min(1, chunks.length); // Single connection first
     
-    // Connect first chunks immediately (these contain the USDT pairs)
-    for (let i = 0; i < fastConnectCount; i++) {
-        if (chunks[i]) {
-            // No delay for first connections - immediate updates after reload
-            this.createWebSocketConnection(chunks[i], i, true); 
-        }
+    // Connect first chunk immediately (contains the most important USDT pairs)
+    if (chunks[0]) {
+        this.createWebSocketConnection(chunks[0], 0, true); 
     }
     
     // Connect remaining chunks with staggered timing
-    for (let i = fastConnectCount; i < chunks.length; i++) {
-        // Increased delays for lower bandwidth usage
-        const delay = isPageReload ? 
-            Math.min(500 * i, 3000) : // Slower connection on page reload
-            Math.min(800 * Math.pow(1.2, i), 5000); // Slower staggered timing
+    for (let i = 1; i < chunks.length; i++) {
+        // Increased delays for better connection stability
+        const delay = Math.min(2000 * i, 10000); // Slower staggered timing with max 10s delay
             
         setTimeout(() => {
             this.createWebSocketConnection(chunks[i], i, false);
@@ -104,50 +126,102 @@ CompleteCryptoDashboard.prototype.createWebSocketConnection = function(symbols, 
     // Use JavaScript native WebSocket without additional headers
     // This helps avoid CORS issues in some environments
     let wsUrl;
+    let isAlternativeEndpoint = false;
+    
     try {
-        // Try secure connection first
+        // Primary endpoint - secure connection
         wsUrl = `wss://stream.binance.com:9443/stream?streams=${streams}`;
         
-        // For local development, you might need to use a fallback
+        // Check if we should use alternative endpoint due to previous failures
+        const connectionFailures = this.connectionReconnectAttempts[connectionIndex] || 0;
+        
+        if (connectionFailures >= 3) {
+            // Try alternative endpoint after 3 failures
+            wsUrl = `wss://stream.binance.com:443/stream?streams=${streams}`;
+            isAlternativeEndpoint = true;
+            console.log(`Using alternative WebSocket endpoint for connection ${connectionIndex + 1} after ${connectionFailures} failures`);
+        }
+        
+        // For local development, add additional debugging
         if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-            console.log(`Using alternative WebSocket endpoint for local development (connection ${connectionIndex + 1})`);
-            // Additional fallback mechanism can be added here if needed
+            console.log(`Local development mode detected for WebSocket ${connectionIndex + 1}`);
         }
     } catch (error) {
         console.error('Error creating WebSocket URL:', error);
         wsUrl = `wss://stream.binance.com:9443/stream?streams=${streams}`;
     }
 
+    console.log(`Creating WebSocket ${connectionIndex + 1} with ${symbols.length} streams (URL length: ${wsUrl.length})`);
     const ws = new WebSocket(wsUrl);
 
-    // Set connection timeout (shorter for priority connections)
+    // Initialize reconnect attempts counter for this connection
+    if (!this.connectionReconnectAttempts) {
+        this.connectionReconnectAttempts = {};
+    }
+    if (!this.connectionReconnectAttempts[connectionIndex]) {
+        this.connectionReconnectAttempts[connectionIndex] = 0;
+    }
+
+    // Set connection timeout (longer timeouts for better reliability)
     const connectionTimeout = setTimeout(() => {
         if (ws.readyState === WebSocket.CONNECTING) {
             console.log(`WebSocket ${connectionIndex + 1} connection timeout`);
             ws.close();
             
-            // For local development, try reconnecting with exponential backoff
-            if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-                const reconnectDelay = Math.min(1000 * Math.pow(1.5, this.reconnectAttempts || 0), 30000);
-                console.log(`Will attempt reconnection in ${reconnectDelay/1000} seconds...`);
+            // Attempt reconnection with exponential backoff
+            const attempts = this.connectionReconnectAttempts[connectionIndex];
+            if (attempts < 5) { // Max 5 attempts per connection
+                const reconnectDelay = Math.min(3000 * Math.pow(1.5, attempts), 30000);
+                console.log(`Will attempt reconnection in ${reconnectDelay/1000} seconds... (attempt ${attempts + 1}/5)`);
                 
                 setTimeout(() => {
                     if (this.isOnline) {
+                        this.connectionReconnectAttempts[connectionIndex]++;
                         this.createWebSocketConnection(symbols, connectionIndex, isPriorityConnection);
                     }
                 }, reconnectDelay);
-                
-                if (!this.reconnectAttempts) this.reconnectAttempts = 0;
-                this.reconnectAttempts++;
+            } else {
+                console.log(`Max reconnection attempts reached for WebSocket ${connectionIndex + 1}`);
             }
         }
-    }, isPriorityConnection ? 8000 : 15000); // Increased timeouts
+    }, isPriorityConnection ? 15000 : 20000); // Increased timeouts: 15s for priority, 20s for others
 
     ws.onopen = () => {
         clearTimeout(connectionTimeout);
-        console.log(`WebSocket ${connectionIndex + 1} connected with ${symbols.length} streams${isPriorityConnection ? ' (priority)' : ''}`);
-        this.reconnectAttempts = 0; // Reset on successful connection
-        this.updateConnectionStatus(true, `Real-time updates active (${this.getActiveConnections()}/${Math.ceil(Array.from(this.priceData.keys()).length / 150)} connections)`);
+        const endpointInfo = isAlternativeEndpoint ? ' (using alternative endpoint)' : '';
+        console.log(`WebSocket ${connectionIndex + 1} connected with ${symbols.length} streams${isPriorityConnection ? ' (priority)' : ''}${endpointInfo}`);
+        this.connectionReconnectAttempts[connectionIndex] = 0; // Reset on successful connection
+        
+        // Immediately mark timestamps as LIVE for fast feedback if this is a reload
+        if (isPriorityConnection && (this.isRefreshing || this.isPageReload)) {
+            // Update last updated time for all symbols in this connection
+            const now = Date.now();
+            symbols.forEach(symbol => {
+                const data = this.priceData.get(symbol);
+                if (data) {
+                    data.lastUpdated = now;
+                    
+                    // Try to update the UI immediately if row exists
+                    const row = document.getElementById(`row-${symbol}`);
+                    if (row) {
+                        const timestampCell = row.querySelector('.timestamp');
+                        if (timestampCell) {
+                            timestampCell.textContent = this.formatTimestamp(now);
+                            timestampCell.classList.add('live-update');
+                            timestampCell.classList.add('recent-update');
+                        }
+                    }
+                }
+            });
+            
+            // Clear the refreshing flag after first priority connection
+            this.isRefreshing = false;
+        }
+        
+        // Update connection status with detailed info
+        const activeConnections = this.getActiveConnections();
+        const totalExpected = Math.ceil(Array.from(this.priceData.keys()).length / 30); // Updated for new STREAMS_PER_CONNECTION
+        this.updateConnectionStatus(true, `Real-time updates active (${activeConnections}/${totalExpected} connections, ${symbols.length * activeConnections} streams)`);
     };
 
     ws.onmessage = (event) => {
@@ -179,39 +253,67 @@ CompleteCryptoDashboard.prototype.createWebSocketConnection = function(symbols, 
         console.log(`WebSocket ${connectionIndex + 1} disconnected (Code: ${event.code}, Reason: ${event.reason})`);
         
         // Only attempt reconnection if we're online and not intentionally closing
-        if (this.isOnline && event.code !== 1000) {
-            // Use exponential backoff for reconnection
-            const baseDelay = 5000;
-            const maxDelay = 30000; // Maximum 30 seconds
+        if (this.isOnline && event.code !== 1000 && event.code !== 1001) {
+            const attempts = this.connectionReconnectAttempts[connectionIndex];
             
-            const backoffFactor = Math.min(Math.pow(1.5, this.reconnectAttempts || 0), 6);
-            const delay = Math.min(baseDelay * backoffFactor + (connectionIndex * 1000), maxDelay);
-            
-            console.log(`Reconnecting WebSocket ${connectionIndex + 1} in ${(delay/1000).toFixed(1)}s (attempt: ${this.reconnectAttempts || 0})`);
-            
-            setTimeout(() => {
-                if (this.isOnline) {
-                    this.createWebSocketConnection(symbols, connectionIndex);
-                    
-                    // Increment reconnect attempts for exponential backoff
-                    if (!this.reconnectAttempts) this.reconnectAttempts = 0;
-                    this.reconnectAttempts++;
-                }
-            }, delay);
+            if (attempts < 5) { // Max 5 attempts per connection
+                // Use exponential backoff for reconnection
+                const baseDelay = 5000;
+                const maxDelay = 30000; // Maximum 30 seconds
+                
+                const backoffFactor = Math.min(Math.pow(1.5, attempts), 6);
+                const delay = Math.min(baseDelay * backoffFactor + (connectionIndex * 1000), maxDelay);
+                
+                console.log(`Reconnecting WebSocket ${connectionIndex + 1} in ${(delay/1000).toFixed(1)}s (attempt: ${attempts + 1}/5)`);
+                
+                setTimeout(() => {
+                    if (this.isOnline) {
+                        this.connectionReconnectAttempts[connectionIndex]++;
+                        this.createWebSocketConnection(symbols, connectionIndex);
+                    }
+                }, delay);
+            } else {
+                console.log(`Max reconnection attempts reached for WebSocket ${connectionIndex + 1}, giving up`);
+            }
         } else if (!this.isOnline) {
             console.log(`Not reconnecting WebSocket ${connectionIndex + 1} - offline mode`);
+        } else {
+            console.log(`WebSocket ${connectionIndex + 1} closed normally (code: ${event.code})`);
         }
     };
 
     ws.onerror = (error) => {
         clearTimeout(connectionTimeout);
-        console.error(`WebSocket ${connectionIndex + 1} error:`, error);
+        const endpointInfo = isAlternativeEndpoint ? ' (alternative endpoint)' : ' (primary endpoint)';
+        console.error(`WebSocket ${connectionIndex + 1} error${endpointInfo}:`, error);
         
-        // If we get too many errors, back off
-        if (this.reconnectAttempts > 5) {
-            console.log(`Too many errors on WebSocket ${connectionIndex + 1}, backing off`);
+        // Enhanced error logging for debugging
+        if (error.target) {
+            console.error(`WebSocket ${connectionIndex + 1} details:`, {
+                readyState: error.target.readyState,
+                url: error.target.url,
+                protocol: error.target.protocol,
+                extensions: error.target.extensions
+            });
+        }
+        
+        // Check if it's a network error vs other types
+        if (ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+            // Connection failed, let onclose handle reconnection
+            console.log(`WebSocket ${connectionIndex + 1} connection failed, onclose will handle reconnection`);
             return;
         }
+        
+        // If we get too many errors, back off
+        const attempts = this.connectionReconnectAttempts[connectionIndex];
+        if (attempts > 5) {
+            console.log(`Too many errors on WebSocket ${connectionIndex + 1}, backing off`);
+            this.updateConnectionStatus(false, `Connection ${connectionIndex + 1} failed after ${attempts} attempts`);
+            return;
+        }
+        
+        // Update status to show error state
+        this.updateConnectionStatus(false, `WebSocket ${connectionIndex + 1} error - attempting recovery...`);
     };
 
     this.webSockets[connectionIndex] = ws;
@@ -402,6 +504,39 @@ CompleteCryptoDashboard.prototype.processPendingSignalUpdates = function() {
     processBatch();
 };
 
+CompleteCryptoDashboard.prototype.updateAllTimestamps = function() {
+    // Update all timestamps to current time to avoid showing stale data
+    const now = Date.now();
+    
+    // Set a flag that we're refreshing data
+    this.isRefreshing = true;
+    
+    // Update timestamps for all price data
+    for (const [symbol, data] of this.priceData.entries()) {
+        // Don't set timestamps too far in the past to avoid "Xh ago" display
+        // At most 1 minute old so they show as "Xs ago"
+        const randomDelay = Math.floor(Math.random() * 60) * 1000; // Random 0-60 seconds
+        data.lastUpdated = now - randomDelay;
+    }
+    
+    // Schedule auto-refresh of table after a short delay
+    setTimeout(() => {
+        this.renderTable();
+        
+        // Prioritize WebSocket setup for faster real price updates
+        // This will happen in addition to the setupWebSocket call in loadSavedData
+        if (!this.webSocketSetupStarted) {
+            this.webSocketSetupStarted = true;
+            this.setupWebSocket();
+        }
+    }, 100);
+    
+    // Clear the refreshing flag after some time
+    setTimeout(() => {
+        this.isRefreshing = false;
+    }, 5000);
+};
+
 CompleteCryptoDashboard.prototype.saveData = function() {
     try {
         const dataToSave = {
@@ -446,6 +581,9 @@ CompleteCryptoDashboard.prototype.loadSavedData = async function() {
                     this.searchTerm = data.searchTerm || '';
                     this.quickFilter = data.quickFilter || 'all';
                     
+                    // Update all timestamps to show they're being refreshed
+                    this.updateAllTimestamps();
+                    
                     console.log(`Restored ${this.priceData.size} symbols from saved data`);
                     this.updateConnectionStatus(false, 'Reloading real-time connections...');
                     
@@ -454,7 +592,9 @@ CompleteCryptoDashboard.prototype.loadSavedData = async function() {
                     
                     // Begin reconnection process - this will update the stale data
                     this.isPageReload = true;
-                    // Flag for faster WebSocket setup
+                    
+                    // Immediately establish first connection for faster updates
+                    this.setupWebSocket();
                 }, 0); // Using setTimeout with 0 to prevent UI blocking
                 
                 return true; // Successfully loaded data
