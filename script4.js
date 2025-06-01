@@ -462,20 +462,50 @@ CompleteCryptoDashboard.prototype.calculateVolatility = function(prices) {
     return Math.sqrt(variance);
 };
 
-CompleteCryptoDashboard.prototype.calculateSimpleRSI = function(prices) {
-    if (prices.length < 14) return 50; // Neutral if not enough data
+CompleteCryptoDashboard.prototype.calculateSimpleRSI = function(prices, period = 14) {
+    if (prices.length < period + 1) return 50; // Neutral if not enough data
     
+    // Calculate price changes
     const changes = [];
     for (let i = 1; i < prices.length; i++) {
         changes.push(prices[i] - prices[i-1]);
     }
     
-    const gains = changes.filter(change => change > 0);
-    const losses = changes.filter(change => change < 0).map(loss => Math.abs(loss));
+    if (changes.length < period) return 50;
     
-    const avgGain = gains.length > 0 ? gains.reduce((a, b) => a + b) / gains.length : 0;
-    const avgLoss = losses.length > 0 ? losses.reduce((a, b) => a + b) / losses.length : 0;
+    // Separate gains and losses
+    const gains = [];
+    const losses = [];
     
+    for (let i = 0; i < changes.length; i++) {
+        if (changes[i] > 0) {
+            gains.push(changes[i]);
+            losses.push(0);
+        } else {
+            gains.push(0);
+            losses.push(Math.abs(changes[i]));
+        }
+    }
+    
+    // Calculate first average gain and loss (simple average)
+    let avgGain = 0;
+    let avgLoss = 0;
+    
+    for (let i = 0; i < period; i++) {
+        avgGain += gains[i];
+        avgLoss += losses[i];
+    }
+    
+    avgGain = avgGain / period;
+    avgLoss = avgLoss / period;
+    
+    // Apply Wilder's smoothing for remaining values
+    for (let i = period; i < gains.length; i++) {
+        avgGain = (avgGain * (period - 1) + gains[i]) / period;
+        avgLoss = (avgLoss * (period - 1) + losses[i]) / period;
+    }
+    
+    // Calculate RSI
     if (avgLoss === 0) return 100;
     
     const rs = avgGain / avgLoss;
